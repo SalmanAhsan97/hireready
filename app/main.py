@@ -31,9 +31,41 @@ CHAT_LIMIT = int(os.getenv("HIREREADY_CHAT_LIMIT", "40"))  # resume-chat message
 _SALT = os.getenv("HIREREADY_CLIENT_SALT", ACCESS_CODE or "hireready")
 
 
+PREVIEW_LIMIT = int(os.getenv("HIREREADY_PREVIEW_LIMIT", "3"))  # free previews per visitor per day
+CONTACT_EMAIL = os.getenv("HIREREADY_CONTACT_EMAIL", "rnwedesign@gmail.com")
+
+
+def has_full_access(request: Request) -> bool:
+    return not ACCESS_CODE or hmac.compare_digest(request.headers.get("x-access-code", ""), ACCESS_CODE)
+
+
 def require_access(request: Request):
-    if ACCESS_CODE and not hmac.compare_digest(request.headers.get("x-access-code", ""), ACCESS_CODE):
-        raise HTTPException(401, {"code": "access_code", "message": "Enter the access code to use HireReady."})
+    if not has_full_access(request):
+        raise HTTPException(401, {
+            "code": "access_code",
+            "message": f"This is part of the full version. Email {CONTACT_EMAIL} for access and pricing, or enter your access code.",
+        })
+
+
+def preview_of(a: Analysis) -> tuple[Analysis, dict]:
+    """Free preview: the score and a taste of the report. Locked parts are removed server-side (not just hidden)."""
+    locked = {
+        "changes": max(0, len(a.changes) - 1),
+        "missing_keywords": len(a.missing_keywords),
+        "gaps": max(0, len(a.gaps) - 1),
+        "strengths": max(0, len(a.strengths) - 1),
+        "red_flags": len(a.red_flags),
+        "requirements": len(a.requirements),
+    }
+    return a.model_copy(update={
+        "changes": a.changes[:1],
+        "missing_keywords": [],
+        "gaps": a.gaps[:1],
+        "strengths": a.strengths[:1],
+        "red_flags": [],
+        "requirements": [],
+        "categories": [c.model_copy(update={"rationale": "", "detail": ""}) for c in a.categories],
+    }), locked
 
 
 def _client_id(request: Request) -> str:
@@ -42,12 +74,16 @@ def _client_id(request: Request) -> str:
 
 
 async def enforce_limit(request: Request, action: str):
-    limit, group, what = (CHAT_LIMIT, ("chat",), "messages") if action == "chat" else (DAILY_LIMIT, ("analyze", "kit"), "runs")
+    limit, group, what = {
+        "chat": (CHAT_LIMIT, ("chat",), "messages"),
+        "preview": (PREVIEW_LIMIT, ("preview",), "free previews"),
+    }.get(action, (DAILY_LIMIT, ("analyze", "kit"), "runs"))
     if limit <= 0:
         return
     used = await cache.count_and_record_usage(_client_id(request), action, group=group)
     if used > limit:
-        raise HTTPException(429, f"You've reached today's limit of {limit} {what}. Try again tomorrow.")
+        extra = f" For unlimited access, email {CONTACT_EMAIL}." if action == "preview" else ""
+        raise HTTPException(429, f"You've reached today's limit of {limit} {what}. Try again tomorrow.{extra}")
 
 
 @app.get("/api/status")
@@ -58,10 +94,12 @@ def status():
         "linkedin_sources": linkedin_sources() or ["LinkedIn public page"],
         "storage": "supabase" if cache.supabase_enabled() else "disk",
         "access_code_required": bool(ACCESS_CODE),
+        "preview_available": bool(ACCESS_CODE),
+        "contact_email": CONTACT_EMAIL,
     }
 
 
-@app.post("/api/analyze", dependencies=[Depends(require_access)])
+@app.post("/api/analyze")
 async def analyze(
     request: Request,
     resume: UploadFile = File(...),
@@ -76,14 +114,17 @@ async def analyze(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    await enforce_limit(request, "analyze")
+    full = has_full_access(request)
+    if not full and request.headers.get("x-access-code", "").strip():
+        raise HTTPException(401, {"code": "access_code", "message": "That access code isn't valid. Clear it for a free preview."})
+    await enforce_limit(request, "analyze" if full else "preview")
 
     # No job given: score the resume on its own. With a job: the full match process.
     if job_text.strip():
         job = Job(url=job_url.strip(), description=job_text.strip())
     elif job_url.strip():
         try:
-            job = await fetch_job(job_url)
+            job = await fetch_job(job_url, premium=full)
         except JobFetchError as e:
             raise HTTPException(422, {"code": "job_fetch_failed", "message": str(e)})
     else:
@@ -106,7 +147,10 @@ async def analyze(
         "job": job.model_dump(mode="json"),
         "analysis": analysis.model_dump(mode="json"),
     })
-    return {"resume_text": resume_text, "job": job, "analysis": analysis, "demo": ai.demo_mode()}
+    locked = None
+    if not full:
+        analysis, locked = preview_of(analysis)
+    return {"resume_text": resume_text, "job": job, "analysis": analysis, "demo": ai.demo_mode(), "preview": not full, "locked": locked}
 
 
 class KitRequest(BaseModel):

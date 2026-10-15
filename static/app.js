@@ -1,6 +1,21 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-const state = { resumeText: "", job: null, analysis: null, kit: null, chat: { messages: [], md: "" } };
+const state = { resumeText: "", job: null, analysis: null, kit: null, chat: { messages: [], md: "" }, preview: false, locked: null, contact: "rnwedesign@gmail.com" };
+
+const LOCK_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>';
+const mailto = () => `mailto:${state.contact}?subject=${encodeURIComponent("HireReady — full access & pricing")}&body=${encodeURIComponent("Hi,\n\nI tried the HireReady preview and I'd like the full version. Could you share pricing?\n\nThanks")}`;
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const lockBox = (title, sub, tall = false) => `
+  <div class="locked ${tall ? "tall" : ""}">
+    <div class="locked-blur" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="locked-body">
+      <div class="lock-icon">${LOCK_SVG}</div>
+      <strong>${esc(title)}</strong>
+      <p>${esc(sub)}</p>
+      <a class="btn primary small" href="${mailto()}">Contact admin for full access</a>
+    </div>
+  </div>`;
+const lockLine = (text) => `<span class="lock-line">${LOCK_SVG}${esc(text)}</span>`;
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\[([^\]]+)\]/g, '<span class="ph">[$1]</span>');
@@ -196,6 +211,8 @@ $("#analyze-form").addEventListener("submit", async (e) => {
     ok = true;
     store.set("hireready_access_code", $("#access_code").value.trim());
     state.demo = data.demo;
+    state.preview = !!data.preview;
+    state.locked = data.locked;
     state.resumeText = data.resume_text; state.job = data.job; state.analysis = data.analysis; state.kit = null;
     renderAnalysis();
   } catch (err) {
@@ -260,7 +277,7 @@ function renderAnalysis() {
       <div class="cat-head"><span>${esc(c.name)} <small>· ${c.weight}%</small></span><span>${c.score}</span></div>
       <div class="bar"><div data-w="${c.score}"></div></div>
       ${c.detail ? `<p class="cat-detail">${esc(c.detail)}</p>` : ""}
-      <p>${esc(c.rationale)}</p>
+      ${state.preview ? `<p>${lockLine("Why this score — in the full report")}</p>` : `<p>${esc(c.rationale)}</p>`}
     </div>`).join("");
   requestAnimationFrame(() => $$(".bar > div").forEach((b) => (b.style.width = b.dataset.w + "%")));
 
@@ -272,7 +289,18 @@ function renderAnalysis() {
   listInto("#strengths", a.strengths, "—");
   listInto("#gaps", a.gaps, "No major gaps");
   listInto("#red-flags", a.red_flags, "None spotted");
+  const L = state.locked;
+  $("#preview-banner").hidden = !state.preview;
+  if (state.preview && L) {
+    const more = (sel, n, word) => { if (n) $(sel).insertAdjacentHTML("beforeend", `<li class="locked-li">${lockLine(`${plural(n, word)} more in the full report`)}</li>`); };
+    more("#strengths", L.strengths, "strength");
+    more("#gaps", L.gaps, "gap");
+    if (L.red_flags) $("#red-flags").innerHTML = `<li class="locked-li">${lockLine(`${plural(L.red_flags, "red flag")} found — see them in the full report`)}</li>`;
+    if (L.missing_keywords) $("#kw-missing").innerHTML = `<span class="chip lock-chip">${LOCK_SVG}${plural(L.missing_keywords, "missing keyword")} — full report</span>`;
+  }
 
+  const lockedEdits = state.preview && L?.changes
+    ? lockBox(`${plural(L.changes, "more edit")} ranked by impact`, "Ready-to-paste rewrites for your resume, highest impact first.", true) : "";
   $("#changes").innerHTML = a.changes.map((c, i) => `
     <div class="change">
       <div class="change-head"><span class="prio ${c.priority}">${c.priority}</span><span class="change-section">${esc(c.section)}</span></div>
@@ -282,7 +310,17 @@ function renderAnalysis() {
         <div class="new">${inline(c.suggested)}<button class="btn ghost small copy" data-change="${i}">Copy</button></div>
       </div>
       <p class="why">${esc(c.why)}</p>
-    </div>`).join("");
+    </div>`).join("") + lockedEdits;
+
+  // chat + kit are full-version features
+  $("#chat-grid").hidden = state.preview;
+  $("#chat-lock").hidden = !state.preview;
+  if (state.preview) $("#chat-lock").innerHTML = lockBox("AI resume editing is in the full version", "Chat to rewrite your summary, bullets or whole resume, then download it as Word.", true);
+  if (state.preview) {
+    $("#cta-title").textContent = "Want the full report?";
+    $("#cta-text").textContent = `Get every edit, the requirement-by-requirement check, AI resume editing and a tailored application kit. Email ${state.contact} for the paid version and pricing.`;
+    $("#kit-btn").textContent = "Contact admin for pricing";
+  }
 
   $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -302,7 +340,8 @@ function coverageMeter(label, total, met, partial, pct) {
 function renderRequirements(a) {
   const reqs = a.requirements || [], cov = a.coverage;
   const card = $("#requirements").closest(".card");
-  card.hidden = !reqs.length || !cov;
+  const lockedReqs = state.preview ? state.locked?.requirements || 0 : 0;
+  card.hidden = !cov || (!reqs.length && !lockedReqs);
   if (card.hidden) return;
   $("#coverage").innerHTML =
     coverageMeter("Must-haves", cov.must_total, cov.must_met, cov.must_partial, cov.must_pct) +
@@ -321,7 +360,9 @@ function renderRequirements(a) {
         <span class="req-status">${STATUS[r.status][1]}</span>
       </li>`).join("")}</ul>`;
   };
-  $("#requirements").innerHTML = group("must", "Must-have") + group("nice", "Nice-to-have");
+  $("#requirements").innerHTML = lockedReqs
+    ? lockBox(`${plural(lockedReqs, "requirement")} checked one by one`, "See exactly which ones you meet, with the matching lines quoted from your resume.", true)
+    : group("must", "Must-have") + group("nice", "Nice-to-have");
 }
 
 // ---- Resume chat ----
@@ -414,6 +455,7 @@ $("#chat-docx").addEventListener("click", () => downloadDocx(state.chat.md || st
 
 // ---- Kit ----
 $("#kit-btn").addEventListener("click", async () => {
+  if (state.preview) { location.href = mailto(); return; }
   if (state.analysis?.mode === "resume") {
     $("#input-card").scrollIntoView({ behavior: "smooth", block: "start" });
     setTimeout(() => $("#job_url").focus({ preventScroll: true }), 400);
@@ -529,4 +571,7 @@ $("#access_code").value = store.get("hireready_access_code");
 api("/api/status").then((s) => {
   $("#demo-pill").hidden = !s.demo;
   if (s.access_code_required) $("#access-wrap").hidden = false;
+  if (s.contact_email) state.contact = s.contact_email;
+  $$(".contact-link").forEach((l) => { l.textContent = state.contact; l.href = mailto(); });
+  $$(".contact-btn").forEach((l) => (l.href = mailto()));
 }).catch(() => {});

@@ -103,7 +103,8 @@ def _clean(el) -> str:
 POSTING_TTL_S = float(os.getenv("HIREREADY_POSTING_TTL_HOURS", "168")) * 3600
 
 
-async def fetch_job(url: str) -> Job:
+async def fetch_job(url: str, premium: bool = True) -> Job:
+    """premium=False (free previews) never spends Bright Data/Apify credit: cache or the public page only."""
     url = url.strip()
     if not url.startswith(("http://", "https://")):
         raise JobFetchError("That doesn't look like a URL.")
@@ -113,7 +114,7 @@ async def fetch_job(url: str) -> Job:
         cached = await cache.get("postings", job_id, Job, max_age_s=POSTING_TTL_S)
         if cached:
             return cached
-        job = await fetch_linkedin(job_id)
+        job = await (fetch_linkedin(job_id) if premium else fetch_linkedin_public(job_id))
         # Don't pin a degraded fallback: if a provider is configured but failed, refetch next time.
         if not linkedin_sources() or job.sources != ["LinkedIn public page"]:
             await cache.put("postings", job_id, job)

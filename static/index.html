@@ -66,9 +66,9 @@
         </details>
 
         <div id="access-wrap" hidden>
-          <label class="field-label" for="access_code">Access code</label>
-          <input type="password" id="access_code" autocomplete="off" placeholder="Ask the person who shared HireReady with you">
-          <small class="hint">Saved in this browser so you only enter it once.</small>
+          <label class="field-label" for="access_code">Access code <span class="optional">optional</span></label>
+          <input type="password" id="access_code" autocomplete="off" placeholder="Leave empty for a free preview">
+          <small class="hint">No code? You'll get a free preview of your report. For the full version and pricing, email <a class="contact-link" href="#">rnwedesign@gmail.com</a>.</small>
         </div>
 
         <div id="form-error" class="error" hidden></div>
@@ -93,6 +93,13 @@
 
     <!-- Step 2 -->
     <section id="results" hidden>
+      <div class="preview-banner" id="preview-banner" hidden>
+        <div>
+          <strong>Free preview — you're seeing part of your report.</strong>
+          <span>Unlock every edit, missing keyword, the requirement-by-requirement check, AI resume chat and the application kit.</span>
+        </div>
+        <a class="btn primary contact-btn" href="#">Contact admin for paid version &amp; pricing</a>
+      </div>
       <div class="demo-banner" id="demo-banner" hidden>
         <strong>Sample result — this isn't your resume.</strong>
         HireReady isn't connected to an AI model right now, so it's showing a built-in example. Your upload wasn't analysed.
@@ -154,7 +161,8 @@
             <p class="muted">Ask for changes in plain words. It only uses facts from your resume or what you tell it — anything it can't verify becomes a [placeholder].</p>
           </div>
         </div>
-        <div class="chat-grid">
+        <div class="chat-lock" id="chat-lock" hidden></div>
+        <div class="chat-grid" id="chat-grid">
           <div class="chat-pane">
             <div class="chat-log" id="chat-log" aria-live="polite"></div>
             <div class="chat-suggest" id="chat-suggest"></div>

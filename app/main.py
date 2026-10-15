@@ -48,6 +48,13 @@ def require_access(request: Request):
         })
 
 
+@app.middleware("http")
+async def plan_for_request(request: Request, call_next):
+    # paid requests get the premium model for writing; scoring is identical on every plan
+    ai.set_plan(has_full_access(request))
+    return await call_next(request)
+
+
 def preview_of(a: Analysis) -> tuple[Analysis, dict]:
     """Free preview: the score and a taste of the report. Locked parts are removed server-side (not just hidden)."""
     locked = {

@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import os
+from contextvars import ContextVar
 import re
 
 import anthropic
@@ -38,6 +39,16 @@ MODEL = os.getenv("HIREREADY_MODEL", "claude-opus-5-5")
 GEMINI_MODEL = os.getenv("HIREREADY_GEMINI_MODEL", "gemini-flash-latest")
 GEMINI_FALLBACK = os.getenv("HIREREADY_GEMINI_FALLBACK", "gemini-flash-lite-latest")
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models"
+# Paid plans: a stronger model for the writing (rationales, rewrites, chat, application kit), e.g.
+# "claude-opus-5-5" or "gemini-pro-latest". Fact extraction always uses the standard model, so a resume's
+# score never depends on the plan. Empty = everyone gets the standard model.
+PREMIUM_MODEL = os.getenv("HIREREADY_PREMIUM_MODEL", "").strip()
+_premium: ContextVar[bool] = ContextVar("premium", default=False)
+
+
+def set_plan(paid: bool) -> None:
+    """Called per request: paid requests get PREMIUM_MODEL for writing tasks."""
+    _premium.set(paid)
 
 _client: anthropic.AsyncAnthropic | None = None
 
@@ -270,7 +281,7 @@ def _inline_refs(schema: dict) -> dict:
     return walk(schema)
 
 
-async def _gemini_parse(content: str, schema, effort: str):
+async def _gemini_parse(content: str, schema, effort: str, models: list[str] | None = None):
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM}]},
         "contents": [{"role": "user", "parts": [{"text": content}]}],
@@ -287,7 +298,7 @@ async def _gemini_parse(content: str, schema, effort: str):
         """Free-tier Gemini is often briefly overloaded (503) or over its per-minute quota (429):
         back off, then try the lighter model, which has its own quota."""
         resp = None
-        for model in dict.fromkeys([GEMINI_MODEL, GEMINI_FALLBACK]):
+        for model in dict.fromkeys(models or [GEMINI_MODEL, GEMINI_FALLBACK]):
             for delay in (0, 3, 8):
                 await asyncio.sleep(delay)
                 try:
@@ -328,12 +339,36 @@ async def _gemini_parse(content: str, schema, effort: str):
                 ]
 
 
-async def _parse(content: str, schema, effort: str):
+def _premium_route() -> str | None:
+    """Which API serves PREMIUM_MODEL, if it's configured and that API has a key."""
+    if not (PREMIUM_MODEL and _premium.get()):
+        return None
+    if PREMIUM_MODEL.startswith("gemini") and os.getenv("GEMINI_API_KEY"):
+        return "gemini"
+    if PREMIUM_MODEL.startswith("claude") and (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
+        return "anthropic"
+    return None
+
+
+async def _parse(content: str, schema, effort: str, writing: bool = False):
+    """writing=True marks tasks whose output is prose for the user (never facts that feed a score)."""
+    route = _premium_route() if writing else None
+    if route:
+        try:
+            if route == "gemini":
+                return await _gemini_parse(content, schema, "high", models=[PREMIUM_MODEL])
+            return await _anthropic_parse(content, schema, effort, PREMIUM_MODEL)
+        except AIError:
+            pass  # the paid model being busy shouldn't fail the request: fall back to the standard one
     if provider() == "gemini":
         return await _gemini_parse(content, schema, effort)
+    return await _anthropic_parse(content, schema, effort, MODEL)
+
+
+async def _anthropic_parse(content: str, schema, effort: str, model: str):
     try:
         resp = await client().beta.messages.parse(
-            model=MODEL,
+            model=model,
             max_tokens=16000,
             system=SYSTEM,
             thinking={"type": "adaptive"},
@@ -390,7 +425,7 @@ async def analyze(resume: str, job: Job) -> Analysis:
             f"{_job_block(job)}\n\n<resume>\n{resume}\n</resume>\n\n"
             f"{_scorecard_block(card)}\n\n{NARRATIVE_INSTRUCTIONS}"
         )
-        narrative = await _parse(content, Narrative, effort="medium")
+        narrative = await _parse(content, Narrative, effort="medium", writing=True)
 
     return scoring.assemble(
         card,
@@ -438,7 +473,7 @@ async def analyze_resume(resume: str) -> Analysis:
             f"<resume>\n{resume}\n</resume>\n\n<target_role>{profile.target_role}</target_role>\n\n"
             f"{_scorecard_block(card)}\n\n{RESUME_NARRATIVE_INSTRUCTIONS}"
         )
-        narrative = await _parse(content, ResumeNarrative, effort="medium")
+        narrative = await _parse(content, ResumeNarrative, effort="medium", writing=True)
 
     return scoring.assemble_resume(card, narrative, profile)
 
@@ -459,7 +494,7 @@ async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage],
         f"<current_resume>\n{current_md or '(not converted yet — use the original)'}\n</current_resume>\n\n"
         f"<conversation>\n{history}\n</conversation>\n\n{CHAT_INSTRUCTIONS}"
     )
-    edit = await _parse(content, ResumeEdit, effort="medium")
+    edit = await _parse(content, ResumeEdit, effort="medium", writing=True)
     if not edit.changed or not edit.resume_markdown.strip():
         edit.resume_markdown = current_md or edit.resume_markdown or resume
         return edit
@@ -506,7 +541,7 @@ async def analyze_profile(profile: LinkedInProfile, target_role: str) -> Analysi
         f"<target_role>{role}</target_role>\n\n<linkedin_profile>\n{json.dumps(brief, indent=1)}\n</linkedin_profile>\n\n"
         f"{_scorecard_block(card)}\n\n{PROFILE_NARRATIVE_INSTRUCTIONS}"
     )
-    narrative = await _parse(content, ProfileNarrative, effort="medium")
+    narrative = await _parse(content, ProfileNarrative, effort="medium", writing=True)
     return scoring.assemble_profile(card, narrative, profile, role)
 
 
@@ -518,4 +553,4 @@ async def build_kit(resume: str, job: Job, analysis: Analysis) -> ApplyKit:
         f"{_job_block(job)}\n\n<resume>\n{resume}\n</resume>\n\n"
         f"<analysis>\n{json.dumps(analysis.model_dump(), indent=1)}\n</analysis>\n\n{KIT_INSTRUCTIONS}"
     )
-    return await _parse(content, ApplyKit, effort="high")
+    return await _parse(content, ApplyKit, effort="high", writing=True)

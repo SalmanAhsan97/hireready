@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HireReady</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <div class="brand"><span class="logo">H</span>HireReady</div>
+      <span id="demo-pill" class="demo-pill" hidden>Demo mode — sample results, no API key set</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>See how you stack up — then become the obvious hire.</h1>
+      <p>Upload your resume and drop in a LinkedIn job link. You'll get a match score, the exact edits to make, and a ready-to-send application kit.</p>
+      <ol class="steps">
+        <li class="active" data-step="1"><span>1</span>Upload</li>
+        <li data-step="2"><span>2</span>Score &amp; fix</li>
+        <li data-step="3"><span>3</span>Apply</li>
+      </ol>
+    </section>
+
+    <!-- Step 1 -->
+    <section class="card" id="input-card">
+      <form id="analyze-form">
+        <label class="field-label">Your resume</label>
+        <label class="drop" id="drop">
+          <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt,.md" hidden>
+          <div class="drop-icon">⬆</div>
+          <div id="drop-text"><strong>Drop your resume here</strong> or click to browse<br><small>PDF, DOCX or TXT · max 5 MB</small></div>
+        </label>
+
+        <label class="field-label" for="job_url">LinkedIn job link</label>
+        <input type="url" id="job_url" name="job_url" placeholder="https://www.linkedin.com/jobs/view/1234567890/">
+        <small class="hint">Works with linkedin.com/jobs/view/… links and most other job boards.</small>
+
+        <details id="paste-box">
+          <summary>Or paste the job description</summary>
+          <textarea id="job_text" name="job_text" rows="8" placeholder="Paste the full job description here…"></textarea>
+        </details>
+
+        <div id="form-error" class="error" hidden></div>
+        <button type="submit" class="btn primary" id="analyze-btn">Score my resume</button>
+      </form>
+    </section>
+
+    <div id="loading" class="loading" hidden>
+      <div class="spinner"></div>
+      <div id="loading-text">Reading the job posting…</div>
+    </div>
+
+    <!-- Step 2 -->
+    <section id="results" hidden>
+      <div class="card score-card">
+        <div class="ring-wrap">
+          <svg viewBox="0 0 120 120" class="ring"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ring-fg"/></svg>
+          <div class="ring-num"><span id="score-num">0</span><small>/100</small></div>
+        </div>
+        <div class="score-meta">
+          <div class="job-line" id="job-line"></div>
+          <div class="job-source" id="job-source" hidden></div>
+          <span class="standing" id="standing"></span>
+          <p class="verdict" id="verdict"></p>
+          <p class="cap-note" id="cap-note" hidden></p>
+          <div class="actions-row">
+            <a class="btn ghost" id="job-link" target="_blank" rel="noopener">View job posting ↗</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2>Score breakdown</h2>
+          <p class="muted">Calculated from the requirement check below — the same resume and job always get the same score.</p>
+          <div id="categories"></div>
+        </div>
+        <div class="card">
+          <h2>Keywords</h2>
+          <h3 class="sub good">In your resume</h3>
+          <div class="chips" id="kw-matched"></div>
+          <h3 class="sub bad">Missing from your resume</h3>
+          <div class="chips" id="kw-missing"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Requirements check</h2>
+        <div class="coverage" id="coverage"></div>
+        <div class="req-groups" id="requirements"></div>
+      </div>
+
+      <div class="grid-3">
+        <div class="card"><h2>Strengths</h2><ul class="list" id="strengths"></ul></div>
+        <div class="card"><h2>Gaps</h2><ul class="list" id="gaps"></ul></div>
+        <div class="card"><h2>Red flags</h2><ul class="list" id="red-flags"></ul></div>
+      </div>
+
+      <div class="card">
+        <h2>What to change</h2>
+        <p class="muted">Ordered by impact. Only use a suggestion if it's true for you — fill any [placeholders] with real numbers.</p>
+        <div id="changes"></div>
+      </div>
+
+      <div class="card cta">
+        <div>
+          <h2>Ready to apply?</h2>
+          <p class="muted">Get a tailored resume, cover letter, recruiter outreach and interview prep for this exact role.</p>
+        </div>
+        <button class="btn primary" id="kit-btn">Build my application kit</button>
+      </div>
+    </section>
+
+    <!-- Step 3 -->
+    <section id="kit" hidden>
+      <div class="card kit-head">
+        <div>
+          <h2>Your application kit</h2>
+          <p class="positioning" id="positioning"></p>
+        </div>
+        <div class="projection">
+          <span id="proj-from"></span><span class="arrow">→</span><span id="proj-to" class="proj-to"></span>
+          <small>projected score</small>
+        </div>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="resume">Tailored resume</button>
+        <button class="tab" data-tab="letter">Cover letter</button>
+        <button class="tab" data-tab="outreach">Outreach</button>
+        <button class="tab" data-tab="interview">Interview prep</button>
+        <button class="tab" data-tab="checklist">Checklist</button>
+      </div>
+
+      <div class="card tab-panel" data-panel="resume">
+        <div class="panel-actions">
+          <button class="btn" id="dl-docx">Download .docx</button>
+          <button class="btn ghost copy" data-copy="resume">Copy text</button>
+        </div>
+        <article class="doc" id="resume-doc"></article>
+      </div>
+
+      <div class="card tab-panel" data-panel="letter" hidden>
+        <div class="panel-actions"><button class="btn ghost copy" data-copy="letter">Copy</button></div>
+        <article class="doc prose" id="letter-doc"></article>
+      </div>
+
+      <div class="card tab-panel" data-panel="outreach" hidden>
+        <div class="msg">
+          <div class="msg-head"><h3>LinkedIn connection note</h3><span class="count" id="note-count"></span><button class="btn ghost small copy" data-copy="note">Copy</button></div>
+          <p class="prose" id="note"></p>
+        </div>
+        <div class="msg">
+          <div class="msg-head"><h3>Recruiter message (after they accept)</h3><button class="btn ghost small copy" data-copy="dm">Copy</button></div>
+          <p class="prose" id="dm"></p>
+        </div>
+        <div class="msg">
+          <div class="msg-head"><h3>Email to the hiring manager</h3><button class="btn ghost small copy" data-copy="email">Copy</button></div>
+          <p class="subject" id="email-subject"></p>
+          <p class="prose" id="email-body"></p>
+        </div>
+        <div class="msg">
+          <h3>Who to contact</h3>
+          <ul class="list" id="contacts"></ul>
+        </div>
+      </div>
+
+      <div class="card tab-panel" data-panel="interview" hidden>
+        <div id="talking-points"></div>
+      </div>
+
+      <div class="card tab-panel" data-panel="checklist" hidden>
+        <ul class="checklist" id="checklist"></ul>
+        <a class="btn primary" id="apply-link" target="_blank" rel="noopener">Open the job and apply ↗</a>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

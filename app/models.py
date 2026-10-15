@@ -168,6 +168,8 @@ class LinkedInProfile(BaseModel):
     has_featured: Optional[bool]
     custom_url: Optional[bool]
     source: str = ""  # "LinkedIn (via Apify)" | "LinkedIn PDF export"
+    open_to_work: Optional[bool] = None  # public #OpenToWork frame (Apify only); recruiter-only mode is invisible
+    has_contact: Optional[bool] = None  # email or website shared in Contact info
 
 
 class ProfileFromPdf(BaseModel):
@@ -181,6 +183,8 @@ class ProfileFromPdf(BaseModel):
     certifications: int
     education: int
     profile_url: str
+    contact_email: bool
+    contact_websites: int
 
 
 ProfileCategoryName = Literal[
@@ -188,7 +192,10 @@ ProfileCategoryName = Literal[
     "About section",
     "Keyword coverage",
     "Experience descriptions",
+    "Experience titles",
+    "Career timeline",
     "Skills",
+    "Network",
     "Credibility",
     "Profile completeness",
 ]

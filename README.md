@@ -37,7 +37,7 @@ HireReady reads a resume (PDF, DOCX or text), optionally pulls a LinkedIn job po
 |---|---|---|
 | **Job match** | Resume + LinkedIn job link (or pasted description) | Match score, must-have / nice-to-have coverage with quoted evidence, missing keywords, ranked edits |
 | **Resume score** | Resume only | General quality score for its best-fit role: keywords, impact, action verbs, structure, contact |
-| **LinkedIn review** | Profile link or LinkedIn "Save to PDF" export + target title | Headline, About, keyword coverage, experience, skills, credibility, completeness, plus rewrites |
+| **LinkedIn review** | Profile link or LinkedIn "Save to PDF" export + target title | Headline, About, keyword coverage, experience descriptions and titles, career timeline, skills, network, credibility, completeness, plus rewrites |
 | **Resume chat** | Plain-language requests ("make my summary punchier") | Edited resume with live preview and .docx export |
 | **Application kit** | Analysis + job | Tailored resume, cover letter, LinkedIn note, recruiter DM, hiring-manager email, interview prep |
 

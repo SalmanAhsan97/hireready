@@ -6,6 +6,7 @@ literally like an ATS would, and the weighted overall score is computed from tho
 """
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Iterable, List, Optional
 
 from .models import (
@@ -453,23 +454,108 @@ def assemble_resume(card: Scorecard, narrative: ResumeNarrative, profile: Resume
 # ---- LinkedIn profile evaluation ----
 # Checks follow LinkedIn's own profile guidance and common recruiter-search practice: a keyword-rich
 # headline, a substantial About, described roles with results, many listed skills, social proof.
+# Titles, timeline and network tiers borrow from the linkedin-profile-score rubric (henriquesantanati, MIT),
+# scored here from the profile's facts instead of by a model.
 
 PROFILE_WEIGHTS = {
-    "Headline": 20,
-    "About section": 15,
-    "Keyword coverage": 20,
-    "Experience descriptions": 20,
-    "Skills": 10,
-    "Credibility": 10,
-    "Profile completeness": 5,
+    "Headline": 18,
+    "About section": 12,
+    "Keyword coverage": 18,
+    "Experience descriptions": 16,
+    "Experience titles": 8,
+    "Career timeline": 5,
+    "Skills": 8,
+    "Network": 6,
+    "Credibility": 5,
+    "Profile completeness": 4,
 }
+SENIORITY_WORDS = {"senior", "sr", "junior", "jr", "lead", "principal", "staff", "head", "chief", "associate",
+                   "intern", "ii", "iii", "iv", "the", "and", "for"}
+CREATIVE_TITLES = r"\b(ninja|wizard|rock ?star|guru|jedi|hero|unicorn|evangelist|magician|hacker)\b"
+SHORT_STINT_EXEMPT = r"\b(intern|internship|trainee|apprentice|volunteer|freelance|contract|contractor|fellow)\b"
+MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+# LinkedIn shows exact counts up to 500; the tiers follow the linkedin-profile-score rubric
+CONNECTION_TIERS = [(500, 100), (300, 80), (150, 60), (50, 40), (0, 20)]
 
 
 def _has_number(text: str) -> bool:
     return bool(re.search(r"\d", re.sub(r"\b(19|20)\d{2}\b", "", text)))
 
 
-def compute_profile(profile: LinkedInProfile, target_role: str, expected: list) -> Scorecard:
+def _title_match(title: str, core: list[str]) -> float:
+    words = set(_norm(title).split())
+    hit = sum(w in words for w in core)
+    return 1.0 if hit == len(core) else 0.5 if hit else 0.0
+
+
+def _titles(profile: LinkedInProfile, target_role: str) -> tuple[int | None, str]:
+    core = [w for w in _norm(target_role).split() if len(w) > 1 and w not in SENIORITY_WORDS]
+    recent = [e for e in profile.experiences if e.title.strip()][:3]
+    if not recent or not core:
+        return None, "No titles to compare — not counted"
+    marks = [_title_match(e.title, core) for e in recent]
+    creative = [e.title for e in profile.experiences if re.search(CREATIVE_TITLES, e.title, re.I)]
+    score = max(0, round(100 * sum(marks) / len(marks)) - 25 * bool(creative))
+    full, part = marks.count(1.0), marks.count(0.5)
+    detail = f"{full} of {len(recent)} recent titles name {target_role}" + (f", {part} partly" if part else "")
+    return score, detail + (f"; informal title: {creative[0]}" if creative else "")
+
+
+def _month_index(text: str, end: bool, today: date) -> tuple[int | None, bool]:
+    """(year*12 + month, has_month). Year-only dates assume the generous end (Jan start, Dec end)."""
+    t = text.strip().lower()
+    if not t or re.match(r"present|current|now", t):
+        return (today.year * 12 + today.month, True) if t else (None, False)
+    year = re.search(r"\b(19|20)\d{2}\b", t)
+    if not year:
+        return None, False
+    mon = next((MONTHS[m[:3]] for m in re.findall(r"[a-z]{3,}", t) if m[:3] in MONTHS), None)
+    if mon is None and (num := re.search(r"\b(19|20)\d{2}[-/](\d{1,2})\b|\b(\d{1,2})[-/](19|20)\d{2}\b", t)):
+        mon = int(num.group(2) or num.group(3))
+    return int(year.group()) * 12 + (mon or (12 if end else 1)), mon is not None
+
+
+def _timeline(profile: LinkedInProfile, today: date) -> tuple[int | None, str]:
+    roles = []
+    for e in profile.experiences:
+        start, start_m = _month_index(e.start, False, today)
+        stop, _ = _month_index(e.end or "present", True, today)
+        if start is not None and stop is not None and stop >= start:
+            current = not e.end.strip() or bool(re.match(r"present|current|now", e.end.strip(), re.I))
+            roles.append((start, stop, start_m, current, e.title))
+    if not roles:
+        return None, "No dated roles — not counted"
+    # stints: the 5 most recent finished roles, ignoring roles that are short by design
+    finished = [r for r in sorted(roles, reverse=True) if not r[3] and not re.search(SHORT_STINT_EXEMPT, r[4], re.I)][:5]
+    short = sum(stop - start + 1 < 12 for start, stop, *_ in finished)
+    stints = 50 * (1 - short / len(finished)) if finished else 50
+    # gaps: more than 3 months between the end of everything so far and the next role's start
+    gaps, reach = 0, None
+    for start, stop, *_ in sorted(roles):
+        if reach is not None and start - reach - 1 > 3:
+            gaps += 1
+        reach = stop if reach is None else max(reach, stop)
+    monthly = sum(r[2] for r in roles)
+    score = round(stints + (25 if not gaps else 12 if gaps == 1 else 0) + 25 * monthly / len(roles))
+    detail = (f"{short} of {len(finished)} recent finished roles under a year; " if finished else "") + \
+        f"{gaps} gap{'s' * (gaps != 1)} over 3 months; {monthly} of {len(roles)} roles dated by month"
+    return score, detail
+
+
+def _network(connections: int | None) -> tuple[int | None, str]:
+    if connections is None:
+        return None, "Connection count not in the PDF export — not counted"
+    score = next(pts for floor, pts in CONNECTION_TIERS if connections >= floor)
+    return score, f"{'500+' if connections >= 500 else connections} connections (500+ is the credibility threshold)"
+
+
+def _name_ok(name: str) -> bool:
+    letters = re.sub(r"[^A-Za-z]", "", name)
+    return bool(name.strip()) and not re.search(r"[^\w\s.,'’()-]", name) and not (len(letters) > 3 and (letters.isupper() or letters.islower()))
+
+
+def compute_profile(profile: LinkedInProfile, target_role: str, expected: list, today: date | None = None) -> Scorecard:
+    today = today or date.today()
     role_norm, head_norm = _norm(target_role), _norm(profile.headline)
     all_text = _norm(" ".join([profile.headline, profile.about, *(f"{e.title} {e.description}" for e in profile.experiences), *profile.skills]))
     terms = [k for k in expected if k.term.strip()]
@@ -506,6 +592,9 @@ def compute_profile(profile: LinkedInProfile, target_role: str, expected: list) 
     else:
         parts["Experience descriptions"] = (0, "No roles listed")
 
+    parts["Experience titles"] = _titles(profile, target_role)
+    parts["Career timeline"] = _timeline(profile, today)
+
     if profile.skills_total is None:
         parts["Skills"] = (None, "Skills count not in the PDF export — not counted")
     else:
@@ -517,18 +606,21 @@ def compute_profile(profile: LinkedInProfile, target_role: str, expected: list) 
     cred += 30 if profile.certifications else 0; notes.append(f"{profile.certifications} certifications")
     cred += 30 if profile.education else 0; notes.append(f"{profile.education} education entries")
     max_cred = 100 if profile.recommendations is not None else 60
+    parts["Network"] = _network(profile.connections)
     parts["Credibility"] = (round(100 * cred / max_cred), ", ".join(notes))
 
     checks = {
         "photo": profile.has_photo, "banner": profile.has_banner, "Featured section": profile.has_featured,
-        "custom URL": profile.custom_url, "500+ connections": None if profile.connections is None else profile.connections >= 500,
-        "location": bool(profile.location),
+        "custom URL": profile.custom_url, "location": bool(profile.location),
+        "email or website in Contact info": profile.has_contact, "name in normal capitalization": _name_ok(profile.name),
     }
     known = {k: v for k, v in checks.items() if v is not None}
     missing = [k for k, v in known.items() if not v]
+    # The public #OpenToWork frame is reported, not scored: "off" may just mean the recruiter-only setting is on.
+    otw = "" if profile.open_to_work is None else f"; Open to Work frame {'on' if profile.open_to_work else 'off'} (not scored)"
     parts["Profile completeness"] = (
         round(100 * (len(known) - len(missing)) / len(known)) if known else None,
-        ("Missing: " + ", ".join(missing)) if missing else f"All {len(known)} checks pass",
+        (("Missing: " + ", ".join(missing)) if missing else f"All {len(known)} checks pass") + otw,
     )
 
     categories = [

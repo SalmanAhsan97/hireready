@@ -470,4 +470,7 @@ def _profile_from_apify(rec: dict, pid: str) -> LinkedInProfile:
         has_featured=bool(featured.get("slides") or featured.get("images") or featured.get("link")),
         custom_url=not re.search(r"-[0-9a-f]{6,}$|\d{5,}$", pid),  # default URLs end in a random suffix
         source="LinkedIn (via Apify)",
+        open_to_work=rec.get("openToWork"),
+        # the default scrape has no contact info; only judge it when the record actually carries the fields
+        has_contact=bool(rec.get("emails") or rec.get("websites")) if ("emails" in rec or "websites" in rec) else None,
     )

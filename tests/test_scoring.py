@@ -108,3 +108,57 @@ def test_linkedin_checks_the_source_cant_see_are_skipped():
     assert skills.weight == 0  # the PDF export has no skills count, so it isn't scored
     headline = next(c for c in card.categories if c.name == "Headline")
     assert headline.score >= 60  # names the target title and is a good length
+
+
+def _profile(**kw):
+    base = dict(
+        name="Jane Doe", headline="Marketing Manager | Paid social, SEO and growth for SaaS brands", about="I grow brands. " * 60,
+        location="Lahore", experiences=[], skills=["SEO"], skills_total=30, certifications=1, recommendations=2, education=1,
+        connections=600, has_photo=True, has_banner=True, has_featured=True, custom_url=True,
+    )
+    return LinkedInProfile(**{**base, **kw})
+
+
+def _cat(card, name):
+    return next(c for c in card.categories if c.name == name)
+
+
+def test_profile_weights_sum_to_100():
+    assert sum(scoring.PROFILE_WEIGHTS.values()) == 100
+
+
+def test_titles_matching_the_target_score_higher():
+    exp = lambda t: ProfileExperience(title=t, company="Acme", description="", start="Jan 2020", end="Dec 2021")
+    aligned = scoring.compute_profile(_profile(experiences=[exp("Senior Marketing Manager"), exp("Marketing Manager")]), "Marketing Manager", [])
+    mixed = scoring.compute_profile(_profile(experiences=[exp("Growth Ninja"), exp("Sales Executive")]), "Marketing Manager", [])
+    assert _cat(aligned, "Experience titles").score == 100
+    assert _cat(mixed, "Experience titles").score == 0 and "Ninja" in _cat(mixed, "Experience titles").detail
+
+
+def test_job_hopping_and_gaps_lower_the_timeline_score():
+    today = scoring.date(2026, 10, 1)
+    exp = lambda s, e, t="Marketing Manager": ProfileExperience(title=t, company="Acme", description="", start=s, end=e)
+    stable = _profile(experiences=[exp("Mar 2023", "Present"), exp("Jan 2019", "Feb 2023")])
+    hoppy = _profile(experiences=[exp("Mar 2025", "Present"), exp("Jan 2024", "Jun 2024"), exp("Jan 2023", "Aug 2023"),
+                                  exp("Jun 2022", "Sep 2022", "Marketing Intern")])
+    a = _cat(scoring.compute_profile(stable, "Marketing Manager", [], today), "Career timeline")
+    b = _cat(scoring.compute_profile(hoppy, "Marketing Manager", [], today), "Career timeline")
+    assert a.score == 100
+    assert b.score < 40 and "2 of 2 recent finished roles under a year" in b.detail  # the internship isn't held against them
+    year_only = _cat(scoring.compute_profile(_profile(experiences=[exp("2019", "2023")]), "Marketing Manager", [], today), "Career timeline")
+    assert year_only.score == 75  # full stint/gap credit, no month precision
+
+
+def test_network_tiers_and_unknowns_are_excluded():
+    assert scoring._network(600)[0] == 100 and scoring._network(320)[0] == 80 and scoring._network(10)[0] == 20
+    card = scoring.compute_profile(_profile(connections=None), "Marketing Manager", [])
+    assert _cat(card, "Network").weight == 0  # PDF export has no connection count
+
+
+def test_open_to_work_is_reported_not_scored_and_contact_counts_when_known():
+    on = scoring.compute_profile(_profile(open_to_work=True, has_contact=True), "Marketing Manager", [])
+    off = scoring.compute_profile(_profile(open_to_work=False, has_contact=True), "Marketing Manager", [])
+    assert _cat(on, "Profile completeness").score == _cat(off, "Profile completeness").score == 100
+    assert "Open to Work frame on" in _cat(on, "Profile completeness").detail
+    no_contact = scoring.compute_profile(_profile(has_contact=False, name="JANE DOE"), "Marketing Manager", [])
+    assert "email or website" in _cat(no_contact, "Profile completeness").detail and "capitalization" in _cat(no_contact, "Profile completeness").detail

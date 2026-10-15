@@ -176,7 +176,9 @@ PROFILE_PDF_INSTRUCTIONS = """This is a LinkedIn profile exported with "Save to 
 - headline: the line under the name. about: the full Summary/About text ("" if none).
 - experiences: every position, most recent first, with its full description ("" if none).
 - top_skills: the "Top Skills" list. certifications / education: how many entries each section has.
-- profile_url: the linkedin.com/in/... URL from the contact section ("" if none)."""
+- profile_url: the linkedin.com/in/... URL from the contact section ("" if none).
+- contact_email: true if the Contact section shows an email address. contact_websites: how many non-LinkedIn \
+links (portfolio, company, GitHub, blog) the Contact section lists."""
 
 PROFILE_NARRATIVE_INSTRUCTIONS = """Review this LinkedIn profile for someone targeting <target_role>. The scorecard above was \
 computed by code from the profile; the scores are final — explain them, don't re-score.
@@ -186,7 +188,8 @@ of the profile.
 - verdict: one or two plain sentences on how findable and convincing this profile is to recruiters searching for \
 <target_role>.
 - strengths / gaps: 3-5 each, concrete. red_flags: things that put recruiters off (empty headline, gaps, \
-mismatched titles, "open to work" mixed signals). Empty list if none.
+titles that don't match the target, short stints or gaps from Career timeline, "open to work" mixed signals). \
+Empty list if none.
 - changes: 6-10 edits, highest impact first. Include a rewritten headline (under 220 characters) and an About \
 opening (first 2-3 lines) as `suggested` text. `section` is the profile section (Headline, About, Experience — \
 <company>, Skills, Featured...). `current` quotes the profile.
@@ -484,7 +487,7 @@ async def profile_from_pdf_text(text: str) -> LinkedInProfile:
         skills_total=None, certifications=pdf.certifications, recommendations=None, education=pdf.education,
         connections=None, has_photo=None, has_banner=None, has_featured=None,
         custom_url=(not re.search(r"-[0-9a-f]{6,}$|\d{5,}$", slug.group(1))) if slug else None,
-        source="LinkedIn PDF export",
+        source="LinkedIn PDF export", has_contact=pdf.contact_email or pdf.contact_websites > 0,
     )
     await cache.put("li-profiles", key, profile)
     return profile

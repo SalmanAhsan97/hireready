@@ -191,6 +191,7 @@ textarea { resize: vertical; }
 .bar { height: 8px; background: var(--surface-2); border-radius: 99px; margin: 6px 0 4px; overflow: hidden; }
 .bar > div { height: 100%; border-radius: 99px; background: var(--accent); width: 0; transition: width .8s ease; }
 .cat p { margin: 0; font-size: 13px; color: var(--muted); }
+.cat.not-counted { opacity: .55; }
 .cat p.cat-detail { color: var(--text); font-size: 12px; margin-bottom: 2px; }
 .cap-note { font-size: 13px; color: var(--warn); background: var(--warn-soft); padding: 6px 10px; border-radius: 8px; margin: -4px 0 14px; display: inline-block; }
 

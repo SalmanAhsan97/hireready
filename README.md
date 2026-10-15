@@ -1,10 +1,35 @@
 # HireReady
 
+[![tests](https://github.com/SalmanAhsan97/hireready/actions/workflows/tests.yml/badge.svg)](https://github.com/SalmanAhsan97/hireready/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+[![Live demo](https://img.shields.io/badge/demo-live-4f46e5)](https://web-production-7af8e.up.railway.app)
+
+![HireReady — resume scores you can actually trust](docs/social-preview.png)
+
 **Score your resume against a real job, see exactly which requirements you meet, and fix the gaps — with scores that don't change every time you click.**
 
 **Live demo:** [web-production-7af8e.up.railway.app](https://web-production-7af8e.up.railway.app) (free preview, no sign-up)
 
 HireReady reads a resume (PDF, DOCX or text), optionally pulls a LinkedIn job posting, and returns a 0–100 match score, a requirement-by-requirement check, ranked edits, an AI resume editor and a ready-to-send application kit. It can also review a LinkedIn profile against the title you're targeting.
+
+## Screenshots
+
+| Job match score | Requirement-by-requirement check |
+|---|---|
+| ![Job match score and breakdown](docs/screenshots/03-job-match.png) | ![Must-have and nice-to-have coverage with quoted evidence](docs/screenshots/04-requirements.png) |
+| **AI resume editor** | **LinkedIn profile review** |
+| ![Resume chat with live preview](docs/screenshots/06-resume-chat.png) | ![LinkedIn profile scored against a target title](docs/screenshots/07-linkedin-review.png) |
+
+<details>
+<summary>More: home, loader, ranked edits</summary>
+
+![Home](docs/screenshots/01-home.png)
+![Staged loader with real upload progress](docs/screenshots/02-loader.png)
+![Ranked, ready-to-paste edits](docs/screenshots/05-edits.png)
+
+</details>
 
 ## What it does
 
@@ -63,6 +88,19 @@ cp .env.example .env   # add an AI key; everything else is optional
 Open http://localhost:8765. With no AI key set, the app runs in demo mode with sample results so the whole flow can be clicked through.
 
 Database tables are in [`supabase/migrations/`](supabase/migrations).
+
+## Tests
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+```
+
+The suite runs offline — no API keys, no database — and covers what the product promises: identical scores for identical inputs, quotes checked against the resume, degree comparison, ATS-style keyword matching, PDF line reflow, server-side redaction of the free preview, and access control. It runs on every push via GitHub Actions.
+
+## License
+
+[MIT](LICENSE)
 
 ## Author
 

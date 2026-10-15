@@ -327,9 +327,9 @@ function renderAnalysis() {
   link.textContent = a.mode === "linkedin" ? "View profile ↗" : "View job posting ↗";
 
   $("#categories").innerHTML = a.categories.map((c) => `
-    <div class="cat">
-      <div class="cat-head"><span>${esc(c.name)} <small>· ${c.weight}%</small></span><span>${c.score}</span></div>
-      <div class="bar"><div data-w="${c.score}"></div></div>
+    <div class="cat ${c.weight ? "" : "not-counted"}">
+      <div class="cat-head"><span>${esc(c.name)} <small>· ${c.weight ? c.weight + "%" : "not counted"}</small></span><span>${c.weight ? c.score : "n/a"}</span></div>
+      <div class="bar"><div data-w="${c.weight ? c.score : 0}"></div></div>
       ${c.detail ? `<p class="cat-detail">${esc(c.detail)}</p>` : ""}
       ${state.preview ? `<p>${lockLine("Why this score — in the full report")}</p>` : `<p>${esc(c.rationale)}</p>`}
     </div>`).join("");

@@ -78,6 +78,7 @@ Ground rules:
 When a rewrite would benefit from a metric the resume lacks, use a bracketed placeholder like \
 [X%] or [team size] for the candidate to fill in.
 - Be candid. A weak match should score low; inflated scores don't help anyone get hired.
+- Write to the candidate directly ("you", "your"). Never refer to them in the third person or guess their pronouns.
 - Quote the resume's actual wording in `current` fields so the candidate can find it."""
 
 REQUIREMENTS_RULES = """Requirements (job side):

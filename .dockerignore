@@ -5,3 +5,5 @@
 .git
 __pycache__
 supabase
+tests
+.github

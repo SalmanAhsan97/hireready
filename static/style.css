@@ -371,3 +371,15 @@ textarea { resize: vertical; }
 .mode-tab { flex: 1; font: inherit; font-weight: 600; font-size: 14px; padding: 10px 12px; border: 0; border-radius: 9px; background: none; color: var(--muted); cursor: pointer; transition: background .2s, color .2s, box-shadow .2s; }
 .mode-tab.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow), 0 0 0 1px var(--border); }
 #linkedin-fields input[type=file] { font: inherit; font-size: 13px; margin-bottom: 4px; }
+
+/* show/hide password */
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 44px; }
+.admin-dialog .pw-wrap { margin-bottom: 12px; }
+.admin-dialog .pw-wrap input { margin-bottom: 0; }
+.eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; display: grid; place-items: center; background: none; border: 0; border-radius: 8px; color: var(--muted); cursor: pointer; }
+.eye:hover { color: var(--text); background: var(--accent-soft); }
+.eye:focus-visible { outline: 2px solid var(--accent); }
+.eye svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.eye .eye-off, .eye[aria-pressed="true"] .eye-open { display: none; }
+.eye[aria-pressed="true"] .eye-off { display: inline; }

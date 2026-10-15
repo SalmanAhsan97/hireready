@@ -680,6 +680,15 @@ async function downloadResume(markdownText, suffix, format) {
   document.readyState === "complete" ? hide() : addEventListener("load", hide, { once: true });
 })();
 
+// ---- Show/hide password ----
+$$(".eye").forEach((btn) => btn.addEventListener("click", () => {
+  const input = btn.previousElementSibling, show = input.type === "password";
+  input.type = show ? "text" : "password";
+  btn.setAttribute("aria-pressed", show);
+  btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  input.focus();
+}));
+
 // ---- Owner sign-in (full version, no daily limits; the session is an HttpOnly cookie) ----
 function setAdmin(on) {
   state.admin = on;
@@ -704,6 +713,8 @@ $("#admin-form").addEventListener("submit", async (e) => {
     return;
   }
   $("#admin_pass").value = "";
+  $("#admin_pass").type = "password";
+  $("#admin-dialog .eye").setAttribute("aria-pressed", "false");
   $("#admin-dialog").close();
   setAdmin(true);
   toast("Signed in — full version unlocked");

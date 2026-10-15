@@ -433,3 +433,4 @@ textarea { resize: vertical; }
 .cmp-foot { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
 .cmp-card .standing { text-transform: none; white-space: nowrap; font-size: 12px; }
 .cmp-rank { white-space: nowrap; }
+.cmp-top .standing:only-child { margin-left: auto; }

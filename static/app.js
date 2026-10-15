@@ -243,7 +243,7 @@ function renderComparison(c, job) {
   $("#cmp-cards").innerHTML = c.entries.map((e) => {
     const best = e.rank === 1 && !c.tie;
     return `<div class="cmp-card ${best ? "best" : ""}">
-      <div class="cmp-top"><span class="cmp-rank">${best ? "★ Best fit" : "#" + e.rank}</span>
+      <div class="cmp-top">${best ? `<span class="cmp-rank">★ Best fit</span>` : ""}
         <span class="standing s-${esc(e.standing.split(" ")[0])}">${esc(CHANCES[e.standing] || e.standing)}</span></div>
       <div class="cmp-name">${esc(e.name)}</div>
       <div class="cmp-score">${e.overall_score}<small>/100</small></div>

@@ -109,3 +109,29 @@ async def save_analysis(row: dict):
         resp.raise_for_status()
     except httpx.HTTPError as e:
         log.warning("Saving analysis to Supabase failed: %r", e)
+
+
+# ---- Usage (daily limit) ----
+
+_local_usage: dict[str, list[float]] = {}
+
+
+async def count_and_record_usage(client: str, action: str, window_s: float = 86400) -> int:
+    """Record one use and return how many uses this client has made in the window, including this one."""
+    if supabase_enabled():
+        try:
+            since = datetime.fromtimestamp(time.time() - window_s, timezone.utc).isoformat()
+            (await _sb().post("/hireready_usage", headers={"Prefer": "return=minimal"}, json={"client": client, "action": action})).raise_for_status()
+            resp = await _sb().get(
+                "/hireready_usage",
+                params={"client": f"eq.{client}", "created_at": f"gte.{since}", "select": "id"},
+                headers={"Prefer": "count=exact", "Range": "0-0"},
+            )
+            resp.raise_for_status()
+            return int(resp.headers.get("content-range", "*/0").split("/")[-1])
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("Supabase usage tracking failed, counting in memory: %r", e)
+    now = time.time()
+    hits = [t for t in _local_usage.get(client, []) if now - t < window_s] + [now]
+    _local_usage[client] = hits
+    return len(hits)

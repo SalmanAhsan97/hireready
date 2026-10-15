@@ -39,6 +39,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
@@ -80,8 +81,8 @@ small { color: var(--muted); }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
 .drop.has-file { border-style: solid; border-color: var(--good); background: var(--good-soft); }
 .drop-icon { width: 44px; height: 44px; border-radius: 10px; background: var(--surface-2); display: grid; place-items: center; font-size: 18px; flex: none; }
-input[type=url], textarea { width: 100%; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
-input[type=url]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+input[type=url], input[type=password], textarea { width: 100%; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
+input[type=url]:focus, input[type=password]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .hint { display: block; margin-bottom: 16px; }
 details { margin-bottom: 18px; }
 summary { cursor: pointer; color: var(--accent); font-weight: 500; font-size: 14px; margin-bottom: 10px; }
@@ -112,7 +113,6 @@ textarea { resize: vertical; }
 .ring-num small { font-size: 13px; font-weight: 500; }
 .job-line { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .job-source { font-size: 12px; color: var(--muted); margin: -4px 0 8px; }
-.job-source[hidden] { display: none; }
 .standing { display: inline-block; font-size: 13px; font-weight: 600; text-transform: capitalize; padding: 3px 10px; border-radius: 99px; }
 .standing.s-long { background: var(--bad-soft); color: var(--bad); }
 .standing.s-possible { background: var(--warn-soft); color: var(--warn); }
@@ -128,7 +128,6 @@ textarea { resize: vertical; }
 .cat p { margin: 0; font-size: 13px; color: var(--muted); }
 .cat p.cat-detail { color: var(--text); font-size: 12px; margin-bottom: 2px; }
 .cap-note { font-size: 13px; color: var(--warn); background: var(--warn-soft); padding: 6px 10px; border-radius: 8px; margin: -4px 0 14px; display: inline-block; }
-.cap-note[hidden] { display: none; }
 
 .coverage { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 18px; }
 @media (max-width: 600px) { .coverage { grid-template-columns: 1fr; } }

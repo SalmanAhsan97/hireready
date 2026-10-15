@@ -39,8 +39,21 @@ function showError(msg) {
   e.textContent = msg; e.hidden = !msg;
 }
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
+const store = {
+  get: (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+};
+const accessHeaders = () => {
+  const code = $("#access_code").value.trim();
+  return code ? { "X-Access-Code": code } : {};
+};
+function needAccessCode() {
+  $("#access-wrap").hidden = false;
+  $("#access_code").focus();
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { ...(opts.headers || {}), ...accessHeaders() } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const d = body.detail;
@@ -92,10 +105,12 @@ $("#analyze-form").addEventListener("submit", async (e) => {
   loading(true, ["Reading the job posting…", "Comparing your resume to the requirements…", "Checking each requirement…", "Writing your edits…"]);
   try {
     const data = await api("/api/analyze", { method: "POST", body: fd });
+    store.set("hireready_access_code", $("#access_code").value.trim());
     state.resumeText = data.resume_text; state.job = data.job; state.analysis = data.analysis; state.kit = null;
     renderAnalysis();
   } catch (err) {
     showError(err.message);
+    if (err.code === "access_code") needAccessCode();
     if (err.code === "job_fetch_failed") { $("#paste-box").open = true; $("#job_text").focus(); }
   } finally {
     loading(false);
@@ -280,7 +295,7 @@ $("#dl-docx").addEventListener("click", async () => {
   const name = (state.analysis.candidate_name || "resume") + " - " + (state.analysis.company || state.job.company || "tailored");
   const res = await fetch("/api/export/docx", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...accessHeaders() },
     body: JSON.stringify({ markdown: state.kit.tailored_resume_markdown, filename: name }),
   });
   if (!res.ok) return toast("Export failed");
@@ -292,4 +307,8 @@ $("#dl-docx").addEventListener("click", async () => {
 });
 
 // ---- Status ----
-api("/api/status").then((s) => ($("#demo-pill").hidden = !s.demo)).catch(() => {});
+$("#access_code").value = store.get("hireready_access_code");
+api("/api/status").then((s) => {
+  $("#demo-pill").hidden = !s.demo;
+  if (s.access_code_required) $("#access-wrap").hidden = false;
+}).catch(() => {});

@@ -46,6 +46,12 @@
           <textarea id="job_text" name="job_text" rows="8" placeholder="Paste the full job description here…"></textarea>
         </details>
 
+        <div id="access-wrap" hidden>
+          <label class="field-label" for="access_code">Access code</label>
+          <input type="password" id="access_code" autocomplete="off" placeholder="Ask the person who shared HireReady with you">
+          <small class="hint">Saved in this browser so you only enter it once.</small>
+        </div>
+
         <div id="form-error" class="error" hidden></div>
         <button type="submit" class="btn primary" id="analyze-btn">Score my resume</button>
       </form>

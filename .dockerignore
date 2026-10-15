@@ -1,0 +1,7 @@
+.env
+.venv
+.cache
+.claude
+.git
+__pycache__
+supabase

@@ -1,5 +1,7 @@
 import hashlib
+import hmac
 import io
+import os
 import re
 from pathlib import Path
 
@@ -8,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from docx import Document  # noqa: E402
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -22,6 +24,29 @@ MAX_UPLOAD = 5 * 1024 * 1024
 
 app = FastAPI(title="HireReady")
 
+# Public deploys: require a shared access code and cap paid work (scrapes + Claude calls) per visitor per day.
+ACCESS_CODE = os.getenv("HIREREADY_ACCESS_CODE", "")
+DAILY_LIMIT = int(os.getenv("HIREREADY_DAILY_LIMIT", "15"))
+_SALT = os.getenv("HIREREADY_CLIENT_SALT", ACCESS_CODE or "hireready")
+
+
+def require_access(request: Request):
+    if ACCESS_CODE and not hmac.compare_digest(request.headers.get("x-access-code", ""), ACCESS_CODE):
+        raise HTTPException(401, {"code": "access_code", "message": "Enter the access code to use HireReady."})
+
+
+def _client_id(request: Request) -> str:
+    ip = request.client.host if request.client else "unknown"
+    return hashlib.sha256(f"{_SALT}:{ip}".encode()).hexdigest()[:24]
+
+
+async def enforce_limit(request: Request, action: str):
+    if DAILY_LIMIT <= 0:
+        return
+    used = await cache.count_and_record_usage(_client_id(request), action)
+    if used > DAILY_LIMIT:
+        raise HTTPException(429, f"You've reached today's limit of {DAILY_LIMIT} runs. Try again tomorrow.")
+
 
 @app.get("/api/status")
 def status():
@@ -30,11 +55,13 @@ def status():
         "model": ai.MODEL,
         "linkedin_sources": linkedin_sources() or ["LinkedIn public page"],
         "storage": "supabase" if cache.supabase_enabled() else "disk",
+        "access_code_required": bool(ACCESS_CODE),
     }
 
 
-@app.post("/api/analyze")
+@app.post("/api/analyze", dependencies=[Depends(require_access)])
 async def analyze(
+    request: Request,
     resume: UploadFile = File(...),
     job_url: str = Form(""),
     job_text: str = Form(""),
@@ -47,15 +74,17 @@ async def analyze(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    if not (job_text.strip() or job_url.strip()):
+        raise HTTPException(400, "Add a job link or paste the job description.")
+    await enforce_limit(request, "analyze")
+
     if job_text.strip():
         job = Job(url=job_url.strip(), description=job_text.strip())
-    elif job_url.strip():
+    else:
         try:
             job = await fetch_job(job_url)
         except JobFetchError as e:
             raise HTTPException(422, {"code": "job_fetch_failed", "message": str(e)})
-    else:
-        raise HTTPException(400, "Add a job link or paste the job description.")
 
     try:
         analysis = await ai.analyze(resume_text, job)
@@ -83,8 +112,9 @@ class KitRequest(BaseModel):
     analysis: Analysis
 
 
-@app.post("/api/apply-kit")
-async def apply_kit(req: KitRequest):
+@app.post("/api/apply-kit", dependencies=[Depends(require_access)])
+async def apply_kit(req: KitRequest, request: Request):
+    await enforce_limit(request, "kit")
     try:
         kit = await ai.build_kit(req.resume_text, req.job, req.analysis)
     except ai.AIError as e:
@@ -103,7 +133,7 @@ def _add_runs(par, text: str):
             par.add_run(chunk).bold = i % 2 == 1
 
 
-@app.post("/api/export/docx")
+@app.post("/api/export/docx", dependencies=[Depends(require_access)])
 def export_docx(req: DocxRequest):
     doc = Document()
     for line in req.markdown.splitlines():

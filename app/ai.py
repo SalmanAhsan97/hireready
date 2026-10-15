@@ -1,18 +1,26 @@
-"""Claude calls: extract requirements + evidence, write the narrative around a computed score, build the kit.
+"""Model calls: extract requirements + evidence, write the narrative around a computed score, build the kit.
+
+Uses Claude when an Anthropic key is set, otherwise Gemini (GEMINI_API_KEY), otherwise demo mode.
 
 The score itself is computed in scoring.py. Extractions are cached on disk, so re-running the same
 resume against the same job reuses the same facts and therefore gives the same score.
 """
+import asyncio
 import hashlib
 import json
 import os
 
 import anthropic
+import httpx
+from pydantic import ValidationError
 
 from . import cache, scoring
 from .models import Analysis, ApplyKit, Extraction, Job, JobRequirements, Narrative, ResumeEvidence
 
 MODEL = os.getenv("HIREREADY_MODEL", "claude-opus-5-5")
+GEMINI_MODEL = os.getenv("HIREREADY_GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_FALLBACK = os.getenv("HIREREADY_GEMINI_FALLBACK", "gemini-flash-lite-latest")
+GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models"
 
 _client: anthropic.AsyncAnthropic | None = None
 
@@ -21,10 +29,20 @@ class AIError(Exception):
     pass
 
 
+def provider() -> str | None:
+    if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"):
+        return "anthropic"
+    if os.getenv("GEMINI_API_KEY"):
+        return "gemini"
+    return None
+
+
+def model_name() -> str:
+    return GEMINI_MODEL if provider() == "gemini" else MODEL
+
+
 def demo_mode() -> bool:
-    if os.getenv("HIREREADY_DEMO") == "1":
-        return True
-    return not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+    return os.getenv("HIREREADY_DEMO") == "1" or provider() is None
 
 
 def client() -> anthropic.AsyncAnthropic:
@@ -121,7 +139,7 @@ EXTRACT_VERSION = "1"  # bump when the extraction prompts change, to invalidate 
 
 
 def _key(*parts: str) -> str:
-    return hashlib.sha256("\x00".join([EXTRACT_VERSION, MODEL, *parts]).encode()).hexdigest()[:32]
+    return hashlib.sha256("\x00".join([EXTRACT_VERSION, model_name(), *parts]).encode()).hexdigest()[:32]
 
 
 async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidence]:
@@ -147,7 +165,82 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
     return reqs, evidence
 
 
+def _inline_refs(schema: dict) -> dict:
+    """Gemini's JSON-schema support is safest without $ref/$defs, so expand them in place."""
+    defs = schema.get("$defs", {})
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                return walk(defs[node["$ref"].split("/")[-1]])
+            return {k: walk(v) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [walk(x) for x in node]
+        return node
+
+    return walk(schema)
+
+
+async def _gemini_parse(content: str, schema, effort: str):
+    body = {
+        "systemInstruction": {"parts": [{"text": SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": content}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseJsonSchema": _inline_refs(schema.model_json_schema()),
+            "maxOutputTokens": 32768,
+            "thinkingConfig": {"thinkingLevel": "high" if effort == "high" else "low"},
+        },
+    }
+    headers = {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}
+
+    async def generate(http: httpx.AsyncClient) -> httpx.Response:
+        """Free-tier Gemini is often briefly overloaded (503): back off, then try the lighter model."""
+        resp = None
+        for model in dict.fromkeys([GEMINI_MODEL, GEMINI_FALLBACK]):
+            for delay in (0, 2, 5):
+                await asyncio.sleep(delay)
+                try:
+                    resp = await http.post(f"{GEMINI_API}/{model}:generateContent", headers=headers, json=body)
+                except httpx.HTTPError:
+                    continue
+                if resp.status_code not in (500, 502, 503, 504):
+                    return resp
+        if resp is None:
+            raise AIError("Couldn't reach the Gemini API. Check your connection.")
+        return resp
+
+    async with httpx.AsyncClient(timeout=300) as http:
+        for attempt in range(2):
+            resp = await generate(http)
+            if resp.status_code in (401, 403):
+                raise AIError("The Gemini API key is invalid. Check GEMINI_API_KEY.")
+            if resp.status_code == 429:
+                raise AIError("Gemini's free-tier limit was hit. Try again in a minute.")
+            if resp.status_code != 200:
+                raise AIError(f"Gemini is busy right now ({resp.status_code}). Try again in a minute.")
+            data = resp.json()
+            cand = (data.get("candidates") or [{}])[0]
+            reason = cand.get("finishReason")
+            if reason == "MAX_TOKENS":
+                raise AIError("The AI response was cut off. Try again, or shorten the resume/job text.")
+            if reason in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST") or "content" not in cand:
+                raise AIError("The model declined this request.")
+            text = "".join(p.get("text", "") for p in cand["content"].get("parts", []) if not p.get("thought"))
+            try:
+                return schema.model_validate_json(text)
+            except ValidationError as e:
+                if attempt:
+                    raise AIError("The AI returned an incomplete answer. Try again.")
+                body["contents"] += [
+                    {"role": "model", "parts": [{"text": text}]},
+                    {"role": "user", "parts": [{"text": f"That JSON didn't match the schema: {e}. Return the full corrected JSON."}]},
+                ]
+
+
 async def _parse(content: str, schema, effort: str):
+    if provider() == "gemini":
+        return await _gemini_parse(content, schema, effort)
     try:
         resp = await client().beta.messages.parse(
             model=MODEL,

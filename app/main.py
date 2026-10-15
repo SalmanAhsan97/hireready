@@ -52,7 +52,7 @@ async def enforce_limit(request: Request, action: str):
 def status():
     return {
         "demo": ai.demo_mode(),
-        "model": ai.MODEL,
+        "model": ai.model_name(),
         "linkedin_sources": linkedin_sources() or ["LinkedIn public page"],
         "storage": "supabase" if cache.supabase_enabled() else "disk",
         "access_code_required": bool(ACCESS_CODE),

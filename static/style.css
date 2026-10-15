@@ -383,3 +383,17 @@ textarea { resize: vertical; }
 .eye svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .eye .eye-off, .eye[aria-pressed="true"] .eye-open { display: none; }
 .eye[aria-pressed="true"] .eye-off { display: inline; }
+
+/* saved runs (admin) */
+.history-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.history-head h3 { margin: 0; }
+.history-note { font-size: 12px; color: var(--muted); }
+.history-last { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 12px; background: var(--accent-soft); margin-bottom: 12px; }
+.history-last .h-tag { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+.history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 360px; overflow-y: auto; }
+.history-item { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; }
+.h-score { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 15px; background: var(--surface); border: 2px solid var(--border); }
+.h-main { flex: 1 1 auto; min-width: 0; }
+.h-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-target, .h-date { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-empty { color: var(--muted); font-size: 14px; }

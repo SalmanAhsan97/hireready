@@ -133,6 +133,38 @@ class AdminLogin(BaseModel):
     password: str
 
 
+def require_admin(request: Request):
+    if not is_admin(request):
+        raise HTTPException(403, "Sign in as admin to see saved resumes.")
+
+
+async def remember_run(request: Request, resume_name: str, resume_text: str, job: Job, analysis: Analysis):
+    """Admin runs go into the history pool (with the resume text) so they can be previewed later."""
+    if not is_admin(request):
+        return
+    fingerprint = "\n".join([analysis.mode, resume_name, resume_text, job.url, job.description[:2000]])
+    await cache.save_history(hashlib.sha256(fingerprint.encode()).hexdigest()[:32], {
+        "resume_name": resume_name, "mode": analysis.mode, "job_title": analysis.job_title, "company": analysis.company,
+        "job_url": job.url, "overall_score": analysis.overall_score, "standing": analysis.standing,
+        "resume_text": resume_text, "job": job.model_dump(mode="json"), "analysis": analysis.model_dump(mode="json"),
+    })
+
+
+@app.get("/api/history", dependencies=[Depends(require_admin)])
+async def history():
+    return {"items": await cache.list_history()}
+
+
+@app.get("/api/history/{key}", dependencies=[Depends(require_admin)])
+async def history_item(key: str):
+    if not re.fullmatch(r"[0-9a-f]{32}", key):
+        raise HTTPException(404, "Not found.")
+    item = await cache.get_history(key)
+    if not item:
+        raise HTTPException(404, "That saved run is gone.")
+    return {k: item.get(k) for k in ("resume_name", "resume_text", "job", "analysis")}
+
+
 @app.get("/api/admin")
 def admin_status(request: Request):
     return {"admin": is_admin(request)}
@@ -211,6 +243,7 @@ async def analyze(
         "job": job.model_dump(mode="json"),
         "analysis": analysis.model_dump(mode="json"),
     })
+    await remember_run(request, resume.filename or "Resume", resume_text, job, analysis)
     locked = None
     if not full:
         analysis, locked = preview_of(analysis)
@@ -262,6 +295,8 @@ async def linkedin_review(
         "job": {"source": profile.source},
         "analysis": analysis.model_dump(mode="json"),
     })
+    source = profile_pdf.filename if profile_pdf and profile_pdf.filename else profile_url.strip()
+    await remember_run(request, f"LinkedIn: {profile.name or source}", "", Job(url=profile_url.strip(), description=""), analysis)
     locked = None
     if not full:
         analysis, locked = preview_of(analysis)

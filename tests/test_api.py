@@ -110,3 +110,18 @@ def test_admin_sign_in_is_off_without_credentials(monkeypatch):
     monkeypatch.setattr(main, "ADMIN_PASSWORD", "")
     assert client.post("/api/admin/login", json={"username": "", "password": ""}).status_code == 404
     assert client.get("/api/status").json()["admin_login"] is False
+
+
+def test_admin_runs_are_saved_and_can_be_previewed(admin, monkeypatch, tmp_path):
+    from app import cache
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    assert admin.get("/api/history").status_code == 403  # not signed in yet
+    admin.post("/api/admin/login", json={"username": "owner", "password": "test-pass"})
+    client.post("/api/analyze", files={"resume": RESUME})  # a visitor's run is never saved
+    admin.post("/api/analyze", files={"resume": ("my-cv.txt", demo.DEMO_RESUME.encode(), "text/plain")},
+               data={"job_text": "Senior Product Designer at Acme Cloud"})
+    items = admin.get("/api/history").json()["items"]
+    assert [i["resume_name"] for i in items] == ["my-cv.txt"] and items[0]["last_used"]
+    run = admin.get(f"/api/history/{items[0]['key']}").json()
+    assert run["resume_text"].startswith(demo.DEMO_RESUME[:40]) and run["analysis"]["mode"] == "job"
+    assert admin.get("/api/history/not-a-key").status_code == 404

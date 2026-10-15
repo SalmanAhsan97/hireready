@@ -4,6 +4,7 @@ Uses Supabase (tables hireready_cache / hireready_analyses) when SUPABASE_URL an
 SUPABASE_SERVICE_ROLE_KEY are set, so cached facts survive redeploys and are shared between instances.
 Otherwise, or if Supabase is unreachable, falls back to JSON files in .cache/.
 """
+import json
 import logging
 import os
 import time
@@ -109,6 +110,72 @@ async def save_analysis(row: dict):
         resp.raise_for_status()
     except httpx.HTTPError as e:
         log.warning("Saving analysis to Supabase failed: %r", e)
+
+
+# ---- Owner history (admin runs only: resume text is stored for the owner's own runs, never visitors') ----
+
+HISTORY = "history"
+HISTORY_FIELDS = ("resume_name", "mode", "job_title", "company", "job_url", "overall_score", "standing")
+
+
+async def save_history(key: str, value: dict):
+    """Upsert one run; re-running the same resume + job just refreshes its "last used" time."""
+    now = datetime.now(timezone.utc).isoformat()
+    if supabase_enabled():
+        try:
+            resp = await _sb().post(
+                "/hireready_cache",
+                params={"on_conflict": "kind,key"},
+                headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+                json={"kind": HISTORY, "key": key, "value": value, "updated_at": now},
+            )
+            resp.raise_for_status()
+            return
+        except httpx.HTTPError as e:
+            log.warning("Saving history to Supabase failed, using disk: %r", e)
+    path = CACHE_DIR / HISTORY / f"{key}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+    except OSError:
+        pass
+
+
+async def list_history(limit: int = 30) -> list[dict]:
+    """Most recently used first: key, last_used and the summary fields (not the resume text)."""
+    if supabase_enabled():
+        try:
+            select = ",".join(["key", "updated_at", *(f"{f}:value->>{f}" for f in HISTORY_FIELDS)])
+            resp = await _sb().get("/hireready_cache", params={
+                "kind": f"eq.{HISTORY}", "select": select, "order": "updated_at.desc", "limit": str(limit)})
+            resp.raise_for_status()
+            return [{"key": r["key"], "last_used": r["updated_at"], **{f: r.get(f) for f in HISTORY_FIELDS}} for r in resp.json()]
+        except (httpx.HTTPError, ValueError, KeyError) as e:
+            log.warning("Reading history from Supabase failed, using disk: %r", e)
+    rows = []
+    for path in sorted((CACHE_DIR / HISTORY).glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
+        try:
+            v = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        used = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+        rows.append({"key": path.stem, "last_used": used, **{f: v.get(f) for f in HISTORY_FIELDS}})
+    return rows
+
+
+async def get_history(key: str) -> dict | None:
+    if supabase_enabled():
+        try:
+            resp = await _sb().get("/hireready_cache", params={"kind": f"eq.{HISTORY}", "key": f"eq.{key}", "select": "value"})
+            resp.raise_for_status()
+            rows = resp.json()
+            return rows[0]["value"] if rows else None
+        except (httpx.HTTPError, ValueError, KeyError) as e:
+            log.warning("Reading history from Supabase failed, using disk: %r", e)
+    try:
+        return json.loads((CACHE_DIR / HISTORY / f"{key}.json").read_text())
+    except (OSError, ValueError):
+        return None
 
 
 # ---- Usage (daily limit) ----

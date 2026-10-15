@@ -217,6 +217,7 @@ async function submitLinkedIn() {
     Object.assign(state, { demo: data.demo, preview: !!data.preview, locked: data.locked, resumeText: "", kit: null,
       job: { url: data.profile.url, description: "", title: "", company: "" }, analysis: data.analysis });
     renderAnalysis();
+    loadHistory();
   } catch (err) {
     showError(err.message);
     if (err.code === "access_code") needAccessCode();
@@ -258,6 +259,7 @@ $("#analyze-form").addEventListener("submit", async (e) => {
     state.locked = data.locked;
     state.resumeText = data.resume_text; state.job = data.job; state.analysis = data.analysis; state.kit = null;
     renderAnalysis();
+    loadHistory();
   } catch (err) {
     showError(err.message);
     if (err.code === "access_code") needAccessCode();
@@ -689,6 +691,49 @@ $$(".eye").forEach((btn) => btn.addEventListener("click", () => {
   input.focus();
 }));
 
+// ---- Saved runs (admin only): preview an older resume + job without re-running anything ----
+const when = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+};
+const runTarget = (h) => h.mode === "resume" ? `General resume score${h.job_title ? " · best fit: " + h.job_title : ""}`
+  : h.mode === "linkedin" ? `LinkedIn review · ${h.job_title || "profile"}`
+  : [h.job_title, h.company].filter(Boolean).join(" · ") || h.job_url || "Job match";
+const runRow = (h) => `
+  <span class="h-score">${esc(String(h.overall_score ?? "–"))}</span>
+  <div class="h-main">
+    <div class="h-name">${esc(h.resume_name || "Resume")}</div>
+    <div class="h-target">${esc(runTarget(h))}</div>
+    <div class="h-date">Last used ${esc(when(h.last_used))}</div>
+  </div>
+  <button type="button" class="btn ghost small" data-preview="${esc(h.key)}">Preview</button>`;
+
+async function loadHistory() {
+  if (!state.admin) { $("#history").hidden = true; return; }
+  let items = [];
+  try { items = (await api("/api/history")).items || []; } catch { return; }
+  $("#history").hidden = false;
+  const [last, ...rest] = items;
+  $("#history-last").innerHTML = last
+    ? `<div class="history-last">${runRow(last).replace(`<div class="h-name">`, `<div class="h-tag">Last used resume</div><div class="h-name">`)}</div>` : "";
+  $("#history-list").innerHTML = rest.length ? rest.map((h) => `<li class="history-item">${runRow(h)}</li>`).join("")
+    : last ? "" : `<li class="history-empty">Runs you make while signed in as admin will appear here.</li>`;
+}
+
+$("#history").addEventListener("click", async (e) => {
+  const key = e.target.closest("[data-preview]")?.dataset.preview;
+  if (!key) return;
+  try {
+    const run = await api(`/api/history/${key}`);
+    Object.assign(state, { preview: false, locked: null, kit: null, resumeText: run.resume_text || "",
+      job: run.job || { url: "", description: "" }, analysis: run.analysis });
+    state.chat = { messages: [], md: "" };
+    renderAnalysis();
+    $("#results").scrollIntoView({ behavior: "smooth" });
+    toast(`Showing ${run.resume_name || "saved run"}`);
+  } catch (err) { toast(err.message); }
+});
+
 // ---- Owner sign-in (full version, no daily limits; the session is an HttpOnly cookie) ----
 function setAdmin(on) {
   state.admin = on;
@@ -697,6 +742,7 @@ function setAdmin(on) {
   $("#admin-btn").hidden = on || !state.adminLogin;
   if (on) $("#access-wrap").hidden = true;
   else if (state.accessRequired) $("#access-wrap").hidden = false;
+  loadHistory();
 }
 $("#admin-btn").addEventListener("click", () => { $("#admin-err").hidden = true; $("#admin-dialog").showModal(); $("#admin_user").focus(); });
 $("#admin-cancel").addEventListener("click", () => $("#admin-dialog").close());

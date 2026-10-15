@@ -41,6 +41,31 @@ function toast(msg) {
   toast.timer = setTimeout(() => (t.hidden = true), 1800);
 }
 
+// Hero bulletin: rotate the headlines; pause on hover/focus; dots jump to one.
+(() => {
+  const items = $$(".bulletin-items li"), dots = $(".bulletin-dots");
+  if (!items.length) return;
+  let i = 0, timer = null;
+  dots.innerHTML = [...items].map((_, n) => `<button type="button" aria-label="Headline ${n + 1}"></button>`).join("");
+  const show = (n) => {
+    if (n === i) return;
+    items[i].classList.replace("active", "leaving");
+    const old = items[i];
+    setTimeout(() => old.classList.remove("leaving"), 450);
+    i = n;
+    items[i].classList.add("active");
+    dots.querySelectorAll("button").forEach((d, k) => d.classList.toggle("on", k === i));
+  };
+  dots.querySelectorAll("button")[0].classList.add("on");
+  const start = () => { if (!matchMedia("(prefers-reduced-motion: reduce)").matches) timer = setInterval(() => show((i + 1) % items.length), 4500); };
+  const stop = () => clearInterval(timer);
+  dots.addEventListener("click", (e) => { const k = [...dots.children].indexOf(e.target); if (k >= 0) { stop(); show(k); start(); } });
+  const bar = $("#bulletin");
+  bar.addEventListener("mouseenter", stop); bar.addEventListener("mouseleave", start);
+  bar.addEventListener("focusin", stop); bar.addEventListener("focusout", start);
+  start();
+})();
+
 // Progress bar: a paper plane flies along the track to the current step.
 let currentStep = 1;
 function placePlane(animate) {

@@ -11,11 +11,11 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from docx import Document  # noqa: E402
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, cache
+from . import ai, cache, pdf
 from .models import Analysis, ChatMessage, Job
 from .parsing import JobFetchError, extract_resume, extract_resume_text, fetch_job, fetch_linkedin_profile, linkedin_sources
 
@@ -246,7 +246,7 @@ async def resume_chat(req: ChatRequest, request: Request):
     return {"edit": edit, "demo": ai.demo_mode()}
 
 
-class DocxRequest(BaseModel):
+class ExportRequest(BaseModel):
     markdown: str
     filename: str = "resume"
 
@@ -257,8 +257,12 @@ def _add_runs(par, text: str):
             par.add_run(chunk).bold = i % 2 == 1
 
 
+def _safe_name(filename: str) -> str:
+    return re.sub(r"[^\w-]+", "_", filename).strip("_") or "resume"
+
+
 @app.post("/api/export/docx", dependencies=[Depends(require_access)])
-def export_docx(req: DocxRequest):
+def export_docx(req: ExportRequest):
     doc = Document()
     for line in req.markdown.splitlines():
         s = line.rstrip()
@@ -274,11 +278,19 @@ def export_docx(req: DocxRequest):
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
-    name = re.sub(r"[^\w-]+", "_", req.filename).strip("_") or "resume"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{name}.docx"'},
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(req.filename)}.docx"'},
+    )
+
+
+@app.post("/api/export/pdf", dependencies=[Depends(require_access)])
+def export_pdf(req: ExportRequest):
+    return Response(
+        pdf.markdown_to_pdf(req.markdown),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(req.filename)}.pdf"'},
     )
 
 

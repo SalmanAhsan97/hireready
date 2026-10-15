@@ -508,7 +508,8 @@ $("#chat-form").addEventListener("submit", async (e) => {
 $("#chat-copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(state.chat.md || state.resumeText); toast("Copied"); } catch { toast("Couldn't access the clipboard"); }
 });
-$("#chat-docx").addEventListener("click", () => downloadDocx(state.chat.md || state.resumeText, "edited"));
+$("#chat-docx").addEventListener("click", () => downloadResume(state.chat.md || state.resumeText, "edited", "docx"));
+$("#chat-pdf").addEventListener("click", () => downloadResume(state.chat.md || state.resumeText, "edited", "pdf"));
 
 // ---- Kit ----
 $("#kit-btn").addEventListener("click", async () => {
@@ -596,11 +597,13 @@ document.addEventListener("click", async (e) => {
   try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Couldn't access the clipboard"); }
 });
 
-$("#dl-docx").addEventListener("click", () => downloadDocx(state.kit.tailored_resume_markdown, state.analysis.company || state.job.company || "tailored"));
+const kitSuffix = () => state.analysis.company || state.job.company || "tailored";
+$("#dl-docx").addEventListener("click", () => downloadResume(state.kit.tailored_resume_markdown, kitSuffix(), "docx"));
+$("#dl-pdf").addEventListener("click", () => downloadResume(state.kit.tailored_resume_markdown, kitSuffix(), "pdf"));
 
-async function downloadDocx(markdownText, suffix) {
+async function downloadResume(markdownText, suffix, format) {
   const name = (state.analysis.candidate_name || "resume") + " - " + suffix;
-  const res = await fetch("/api/export/docx", {
+  const res = await fetch("/api/export/" + format, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...accessHeaders() },
     body: JSON.stringify({ markdown: markdownText, filename: name }),
@@ -608,7 +611,7 @@ async function downloadDocx(markdownText, suffix) {
   if (!res.ok) return toast("Export failed");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(await res.blob());
-  a.download = name.replace(/[^\w-]+/g, "_") + ".docx";
+  a.download = name.replace(/[^\w-]+/g, "_") + "." + format;
   a.click();
   URL.revokeObjectURL(a.href);
 }

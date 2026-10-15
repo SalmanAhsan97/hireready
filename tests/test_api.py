@@ -56,7 +56,8 @@ def test_wrong_code_is_rejected(access_code):
 def test_full_version_features_need_the_code(access_code):
     chat = client.post("/api/resume-chat", json={"resume_text": "x", "messages": [{"role": "user", "content": "hi"}]})
     docx = client.post("/api/export/docx", json={"markdown": "# x"})
-    assert chat.status_code == 401 and docx.status_code == 401
+    pdf = client.post("/api/export/pdf", json={"markdown": "# x"})
+    assert chat.status_code == 401 and docx.status_code == 401 and pdf.status_code == 401
 
 
 def test_kit_requires_a_job():
@@ -68,3 +69,11 @@ def test_kit_requires_a_job():
 def test_docx_export():
     r = client.post("/api/export/docx", json={"markdown": "# Jane\n## Experience\n- Did **things**", "filename": "jane"})
     assert r.status_code == 200 and r.content[:2] == b"PK"  # .docx is a zip
+
+
+def test_pdf_export():
+    md = demo.DEMO_KIT["tailored_resume_markdown"] + "\n- Zoë Łukasz: 2021--2023 __x__ **bold** — done"
+    r = client.post("/api/export/pdf", json={"markdown": md, "filename": "jane doe"})
+    assert r.status_code == 200 and r.content[:5] == b"%PDF-"
+    assert r.headers["content-type"] == "application/pdf"
+    assert 'filename="jane_doe.pdf"' in r.headers["content-disposition"]

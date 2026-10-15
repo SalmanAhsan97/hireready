@@ -128,8 +128,8 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
     """Requirements are fixed once per job; evidence once per job+resume. Both are cached."""
     block = _job_block(job)
     job_key, pair_key = _key(block), _key(block, resume)
-    reqs = cache.get("jobs", job_key, JobRequirements)
-    evidence = cache.get("evidence", pair_key, ResumeEvidence)
+    reqs = await cache.get("jobs", job_key, JobRequirements)
+    evidence = await cache.get("evidence", pair_key, ResumeEvidence)
     if reqs and evidence:
         return reqs, evidence
     if reqs:
@@ -142,8 +142,8 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
         content = f"{block}\n\n<resume>\n{resume}\n</resume>\n\n{EXTRACT_INSTRUCTIONS}"
         both = await _parse(content, Extraction, effort="medium")
         reqs, evidence = both.job, both.resume
-        cache.put("jobs", job_key, reqs)
-    cache.put("evidence", pair_key, evidence)
+        await cache.put("jobs", job_key, reqs)
+    await cache.put("evidence", pair_key, evidence)
     return reqs, evidence
 
 

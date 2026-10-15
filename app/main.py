@@ -1,3 +1,4 @@
+import hashlib
 import io
 import re
 from pathlib import Path
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai
+from . import ai, cache
 from .models import Analysis, Job
 from .parsing import JobFetchError, extract_resume_text, fetch_job, linkedin_sources
 
@@ -28,6 +29,7 @@ def status():
         "demo": ai.demo_mode(),
         "model": ai.MODEL,
         "linkedin_sources": linkedin_sources() or ["LinkedIn public page"],
+        "storage": "supabase" if cache.supabase_enabled() else "disk",
     }
 
 
@@ -59,6 +61,19 @@ async def analyze(
         analysis = await ai.analyze(resume_text, job)
     except ai.AIError as e:
         raise HTTPException(502, str(e))
+    await cache.save_analysis({
+        "job_url": job.url,
+        "job_title": analysis.job_title,
+        "company": analysis.company,
+        "candidate_name": analysis.candidate_name,
+        "overall_score": analysis.overall_score,
+        "standing": analysis.standing,
+        "must_pct": analysis.coverage.must_pct if analysis.coverage else None,
+        "resume_sha256": hashlib.sha256(resume_text.encode()).hexdigest(),
+        "demo": ai.demo_mode(),
+        "job": job.model_dump(mode="json"),
+        "analysis": analysis.model_dump(mode="json"),
+    })
     return {"resume_text": resume_text, "job": job, "analysis": analysis, "demo": ai.demo_mode()}
 
 

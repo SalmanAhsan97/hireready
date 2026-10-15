@@ -72,13 +72,13 @@ async def fetch_job(url: str) -> Job:
     job_id = linkedin_job_id(url) if "linkedin.com" in url else None
     if job_id:
         # Same posting text -> same extracted requirements -> same score, so reuse a recent fetch.
-        cached = cache.get("postings", job_id, Job, max_age_s=POSTING_TTL_S)
+        cached = await cache.get("postings", job_id, Job, max_age_s=POSTING_TTL_S)
         if cached:
             return cached
         job = await fetch_linkedin(job_id)
         # Don't pin a degraded fallback: if a provider is configured but failed, refetch next time.
         if not linkedin_sources() or job.sources != ["LinkedIn public page"]:
-            cache.put("postings", job_id, job)
+            await cache.put("postings", job_id, job)
         return job
     if "linkedin.com" in url:
         raise JobFetchError("Couldn't find a job ID in that LinkedIn link. Use the link from the job's own page.")

@@ -312,6 +312,10 @@ function renderAnalysis() {
     $("#kit-btn").textContent = "Score my resume";
   }
   $("#chat-card").hidden = profileMode;
+  $("#jobs-card").hidden = !resumeOnly || state.preview || !title;
+  $("#jobs-role").textContent = title || "";
+  $("#jobs-list").innerHTML = "";
+  state.jobs = [];
   const src = $("#job-source"), sources = job.sources || [];
   src.hidden = !sources.length;
   src.textContent = sources.length ? "Job details from " + sources.join(" + ") : "";
@@ -511,6 +515,50 @@ $("#chat-copy").addEventListener("click", async () => {
 $("#chat-docx").addEventListener("click", () => downloadResume(state.chat.md || state.resumeText, "edited", "docx"));
 $("#chat-pdf").addEventListener("click", () => downloadResume(state.chat.md || state.resumeText, "edited", "pdf"));
 
+// ---- Jobs that fit (resume-only score) ----
+$("#jobs-btn").addEventListener("click", async () => {
+  const location = $("#jobs_location").value.trim(), country = $("#jobs_country").value;
+  store.set("hireready_jobs_location", location);
+  store.set("hireready_jobs_country", country);
+  const btn = $("#jobs-btn"), list = $("#jobs-list");
+  btn.disabled = true;
+  btn.textContent = "Searching…";
+  try {
+    const data = await api("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: state.analysis.job_title, location, country }),
+    });
+    state.jobs = data.jobs;
+    list.innerHTML = data.jobs.length ? data.jobs.map((j, i) => `
+      <li>
+        <div>
+          <div class="job-title">${esc(j.title)}</div>
+          <small>${esc([j.company, j.location, j.remote ? "Remote" : "", j.date_posted].filter(Boolean).join(" · "))}</small>
+        </div>
+        <div class="job-actions">
+          <a class="btn ghost small" href="${esc(j.url)}" target="_blank" rel="noopener">View ↗</a>
+          <button class="btn small" data-job="${i}">Check my match</button>
+        </div>
+      </li>`).join("") : `<li class="empty">No recent postings found. Try another city, or leave the city blank.</li>`;
+  } catch (err) {
+    toast(err.message);
+    if (err.code === "access_code") needAccessCode();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Find jobs";
+  }
+});
+$("#jobs-list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-job]");
+  if (!b) return;
+  const j = state.jobs[+b.dataset.job];
+  // Reuse the normal job-match flow; Indeed results carry the description, so nothing is re-fetched.
+  $("#job_url").value = j.url;
+  $("#job_text").value = j.description || "";
+  $("#analyze-form").requestSubmit();
+});
+
 // ---- Kit ----
 $("#kit-btn").addEventListener("click", async () => {
   if (state.preview) { location.href = mailto(); return; }
@@ -633,10 +681,13 @@ async function downloadResume(markdownText, suffix, format) {
 })();
 
 $("#access_code").value = store.get("hireready_access_code");
+$("#jobs_location").value = store.get("hireready_jobs_location");
 api("/api/status").then((s) => {
   $("#demo-pill").hidden = !s.demo;
   if (s.access_code_required) $("#access-wrap").hidden = false;
   if (s.contact_email) state.contact = s.contact_email;
+  const saved = store.get("hireready_jobs_country");
+  $("#jobs_country").innerHTML = (s.job_countries || []).map((c) => `<option ${c === saved ? "selected" : ""}>${esc(c)}</option>`).join("");
   $$(".contact-link").forEach((l) => { l.textContent = state.contact; l.href = mailto(); });
   $$(".contact-btn").forEach((l) => (l.href = mailto()));
 }).catch(() => {});

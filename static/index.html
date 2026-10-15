@@ -207,6 +207,17 @@
         </div>
       </div>
 
+      <div class="card" id="jobs-card" hidden>
+        <h2>Jobs that fit this resume</h2>
+        <p class="muted">Recent postings for <strong id="jobs-role"></strong>. Pick one to see how you match it.</p>
+        <div class="jobs-form">
+          <input type="text" id="jobs_location" placeholder="City (optional), e.g. Toronto" maxlength="100" />
+          <select id="jobs_country" aria-label="Country"></select>
+          <button class="btn primary" id="jobs-btn" type="button">Find jobs</button>
+        </div>
+        <ul class="jobs-list" id="jobs-list"></ul>
+      </div>
+
       <div class="card cta">
         <div>
           <h2 id="cta-title">Ready to apply?</h2>

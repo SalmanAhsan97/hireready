@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, cache, pdf
+from . import ai, cache, jobs, pdf
 from .models import Analysis, ChatMessage, Job
 from .parsing import JobFetchError, extract_resume, extract_resume_text, fetch_job, fetch_linkedin_profile, linkedin_sources
 
@@ -28,6 +28,7 @@ app = FastAPI(title="HireReady")
 ACCESS_CODE = os.getenv("HIREREADY_ACCESS_CODE", "")
 DAILY_LIMIT = int(os.getenv("HIREREADY_DAILY_LIMIT", "15"))  # analyses + application kits
 CHAT_LIMIT = int(os.getenv("HIREREADY_CHAT_LIMIT", "40"))  # resume-chat messages
+JOBS_LIMIT = int(os.getenv("HIREREADY_JOBS_LIMIT", "10"))  # job-board searches
 _SALT = os.getenv("HIREREADY_CLIENT_SALT", ACCESS_CODE or "hireready")
 
 
@@ -77,6 +78,7 @@ async def enforce_limit(request: Request, action: str):
     limit, group, what = {
         "chat": (CHAT_LIMIT, ("chat",), "messages"),
         "preview": (PREVIEW_LIMIT, ("preview",), "free previews"),
+        "jobs": (JOBS_LIMIT, ("jobs",), "job searches"),
     }.get(action, (DAILY_LIMIT, ("analyze", "kit"), "runs"))
     if limit <= 0:
         return
@@ -96,6 +98,7 @@ def status():
         "access_code_required": bool(ACCESS_CODE),
         "preview_available": bool(ACCESS_CODE),
         "contact_email": CONTACT_EMAIL,
+        "job_countries": jobs.COUNTRIES,
     }
 
 
@@ -222,6 +225,27 @@ async def apply_kit(req: KitRequest, request: Request):
     except ai.AIError as e:
         raise HTTPException(502, str(e))
     return {"kit": kit, "demo": ai.demo_mode()}
+
+
+class JobSearchRequest(BaseModel):
+    role: str
+    location: str = ""
+    country: str = "USA"
+
+
+@app.post("/api/jobs", dependencies=[Depends(require_access)])
+async def find_jobs(req: JobSearchRequest, request: Request):
+    """Recent postings for the resume's best-fit role; the client runs the normal job match on the one picked."""
+    if not req.role.strip():
+        raise HTTPException(400, "Score your resume first so we know which role to search for.")
+    if req.country not in jobs.COUNTRIES:
+        raise HTTPException(400, "Pick a country from the list.")
+    await enforce_limit(request, "jobs")
+    try:
+        found = await jobs.search(req.role, req.location, req.country)
+    except jobs.JobSearchError as e:
+        raise HTTPException(502, str(e))
+    return {"jobs": found}
 
 
 class ChatRequest(BaseModel):

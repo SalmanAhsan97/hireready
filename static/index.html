@@ -56,11 +56,17 @@
     <section class="hero">
       <h1>See how you stack up — then become the obvious hire.</h1>
       <p>Upload your resume for an instant score and the exact edits to make. Add a LinkedIn job link to see how you match that role and get a ready-to-send application kit — or review your LinkedIn profile against the title you're targeting.</p>
-      <ol class="steps">
-        <li class="active" data-step="1"><span>1</span>Upload</li>
-        <li data-step="2"><span>2</span>Score &amp; fix</li>
-        <li data-step="3"><span>3</span>Apply</li>
-      </ol>
+      <div class="steps-wrap" id="steps-wrap">
+        <ol class="steps">
+          <li class="active" data-step="1"><span>1</span>Upload</li>
+          <li data-step="2"><span>2</span>Score &amp; fix</li>
+          <li data-step="3"><span>3</span>Apply</li>
+        </ol>
+        <div class="steps-track" aria-hidden="true">
+          <div class="steps-fill" id="steps-fill"></div>
+          <div class="plane" id="plane"><svg class="plane-body" viewBox="0 0 24 24"><path class="plane-wing" d="M2.5 11.2 21 3.5l-4.4 17-5.1-5.4-3.3 3.3.4-5.2z"/><path class="plane-fold" d="M21 3.5 8.6 13.2l.4 5.2 2.5-3.3"/></svg></div>
+        </div>
+      </div>
     </section>
 
     <!-- Step 1 -->

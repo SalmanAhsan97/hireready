@@ -72,11 +72,36 @@ small { color: var(--muted); }
 .hero { padding: 40px 0 24px; max-width: 680px; }
 .hero h1 { font-size: clamp(26px, 4vw, 36px); letter-spacing: -.02em; }
 .hero p { color: var(--muted); font-size: 16px; margin: 12px 0 22px; }
-.steps { display: flex; gap: 8px; list-style: none; padding: 0; margin: 0; flex-wrap: wrap; }
+.steps { display: flex; gap: 8px; list-style: none; padding: 0; margin: 0; }
 .steps li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 6px 12px 6px 6px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); }
 .steps li span { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); font-weight: 600; font-size: 12px; }
 .steps li.active { color: var(--text); border-color: var(--accent); }
 .steps li.active span, .steps li.done span { background: var(--accent); color: var(--accent-ink); }
+.steps li { transition: border-color .4s ease, color .4s ease, transform .2s ease; }
+.steps li span { transition: background .4s ease, color .4s ease; }
+.steps li.done { color: var(--text); }
+.steps li.just-done span { animation: pop .4s ease-out; }
+.steps li.active { animation: stepArrive .5s .75s ease-out backwards; }
+@keyframes stepArrive { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+
+/* progress track + paper plane */
+.steps-wrap { position: relative; display: inline-block; max-width: 100%; padding-bottom: 20px; }
+.steps-track { position: absolute; left: 18px; right: 18px; bottom: 5px; height: 2px; border-radius: 2px;
+  background: repeating-linear-gradient(90deg, var(--border) 0 6px, transparent 6px 11px); }
+.steps-fill { height: 100%; width: var(--fill, 0px); border-radius: 2px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 35%, transparent), var(--accent));
+  transition: width 1s cubic-bezier(.65, 0, .35, 1); }
+.plane { position: absolute; top: -10px; left: 0; width: 22px; height: 22px; color: var(--accent);
+  transform: translateX(var(--x, 0px)); transition: transform 1s cubic-bezier(.65, 0, .35, 1); }
+.plane-body { width: 100%; height: 100%; overflow: visible; animation: planeFloat 2.6s ease-in-out infinite; }
+.plane-wing { fill: var(--accent-soft); stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.plane-fold { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.plane.flying .plane-body { animation: planeFly 1s cubic-bezier(.65, 0, .35, 1); }
+.plane.backward .plane-body { animation: planeBack 1s cubic-bezier(.65, 0, .35, 1); }
+.no-anim, .no-anim * { transition: none !important; }
+@keyframes planeFloat { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-3px) rotate(-4deg); } }
+@keyframes planeFly { 0% { transform: rotate(0); } 25% { transform: translateY(-12px) rotate(-18deg); } 60% { transform: translateY(-9px) rotate(-6deg); } 85% { transform: translateY(1px) rotate(6deg); } 100% { transform: none; } }
+@keyframes planeBack { 0% { transform: scaleX(-1); } 50% { transform: translateY(-8px) scaleX(-1) rotate(-10deg); } 100% { transform: scaleX(1); } }
+
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; margin-bottom: 16px; box-shadow: var(--shadow); }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

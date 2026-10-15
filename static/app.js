@@ -41,13 +41,36 @@ function toast(msg) {
   toast.timer = setTimeout(() => (t.hidden = true), 1800);
 }
 
+// Progress bar: a paper plane flies along the track to the current step.
+let currentStep = 1;
+function placePlane(animate) {
+  const wrap = $("#steps-wrap"), track = $(".steps-track"), li = $(`.steps li[data-step="${currentStep}"]`);
+  if (!wrap || !li) return;
+  const center = li.offsetLeft + li.offsetWidth / 2 - track.offsetLeft;
+  wrap.classList.toggle("no-anim", !animate);
+  $("#plane").style.setProperty("--x", `${center - 11}px`);
+  $("#steps-fill").style.setProperty("--fill", `${Math.max(0, center)}px`);
+  if (!animate) requestAnimationFrame(() => wrap.classList.remove("no-anim"));
+}
 function setStep(n) {
+  const from = currentStep;
+  if (n === from) return;
+  currentStep = n;
   $$(".steps li").forEach((li) => {
-    const s = +li.dataset.step;
+    const s = +li.dataset.step, wasDone = li.classList.contains("done");
     li.classList.toggle("active", s === n);
     li.classList.toggle("done", s < n);
+    li.classList.toggle("just-done", s < n && !wasDone);
+    li.querySelector("span").textContent = s < n ? "✓" : s;
   });
+  const plane = $("#plane");
+  plane.classList.remove("flying", "backward");
+  void plane.offsetWidth;  // restart the flight animation
+  plane.classList.add(n > from ? "flying" : "backward");
+  placePlane(true);
 }
+addEventListener("resize", () => placePlane(false));
+(document.fonts?.ready || Promise.resolve()).then(() => placePlane(false));
 
 function showError(msg) {
   const e = $("#form-error");
@@ -160,6 +183,7 @@ const loader = {
 // ---- Upload ----
 const drop = $("#drop"), fileInput = $("#resume");
 function setFile(f) {
+  if (f) setStep(1);
   if (!f) return;
   const dt = new DataTransfer(); dt.items.add(f); fileInput.files = dt.files;
   drop.classList.remove("has-file");
@@ -231,6 +255,7 @@ async function submitLinkedIn() {
 
 // ---- Compare resumes (Pro) ----
 $("#compare_files").addEventListener("change", () => {
+  setStep(1);
   $("#compare-picked").innerHTML = [...$("#compare_files").files].map((f) => `<li>${esc(f.name)}</li>`).join("");
 });
 const STATUS_MARK = { met: ["✓", "st-met", "Met"], partial: ["½", "st-partial", "Partly met"], missing: ["✗", "st-missing", "Missing"] };
@@ -238,6 +263,7 @@ const CHANCES = { "top candidate": "Strong shortlist chances", competitive: "Goo
 
 function renderComparison(c, job) {
   $("#compare-results").hidden = false;
+  setStep(2);
   $("#cmp-job").textContent = [c.job_title || job.title, c.company || job.company].filter(Boolean).join(" · ");
   $("#cmp-verdict").textContent = c.verdict;
   $("#cmp-callout").classList.toggle("tie", c.tie);

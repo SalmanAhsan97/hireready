@@ -77,3 +77,36 @@ def test_pdf_export():
     assert r.status_code == 200 and r.content[:5] == b"%PDF-"
     assert r.headers["content-type"] == "application/pdf"
     assert 'filename="jane_doe.pdf"' in r.headers["content-disposition"]
+
+
+@pytest.fixture
+def admin(monkeypatch, access_code):
+    monkeypatch.setattr(main, "ADMIN_USER", "owner")
+    monkeypatch.setattr(main, "ADMIN_PASSWORD", "test-pass")
+    main._login_failures.clear()
+    return TestClient(main.app)
+
+
+def test_admin_sign_in_unlocks_the_full_version(admin):
+    assert admin.post("/api/admin/login", json={"username": "owner", "password": "nope"}).status_code == 401
+    assert admin.post("/api/admin/login", json={"username": "Owner", "password": "test-pass"}).status_code == 200
+    assert admin.get("/api/admin").json() == {"admin": True}
+    body = admin.post("/api/analyze", files={"resume": RESUME}, data={"job_text": "Senior Product Designer"}).json()
+    assert body["preview"] is False and body["analysis"]["requirements"]
+    admin.post("/api/admin/logout")
+    assert admin.get("/api/admin").json() == {"admin": False}
+    assert admin.post("/api/analyze", files={"resume": RESUME}, data={"job_text": "Senior Product Designer"}).json()["preview"] is True
+
+
+def test_admin_cookie_is_httponly_and_forged_cookies_fail(admin):
+    r = admin.post("/api/admin/login", json={"username": "owner", "password": "test-pass"})
+    assert "httponly" in r.headers["set-cookie"].lower()
+    forged = TestClient(main.app, cookies={main.ADMIN_COOKIE: "x" * 64})
+    assert forged.get("/api/admin").json() == {"admin": False}
+
+
+def test_admin_sign_in_is_off_without_credentials(monkeypatch):
+    monkeypatch.setattr(main, "ADMIN_USER", "")
+    monkeypatch.setattr(main, "ADMIN_PASSWORD", "")
+    assert client.post("/api/admin/login", json={"username": "", "password": ""}).status_code == 404
+    assert client.get("/api/status").json()["admin_login"] is False

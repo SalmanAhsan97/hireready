@@ -60,6 +60,14 @@ small { color: var(--muted); }
 .demo-banner { background: var(--warn-soft); color: var(--warn); border: 1px solid currentColor; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; font-size: 14px; }
 .demo-banner strong { display: block; margin-bottom: 2px; }
 .demo-pill { font-size: 12px; background: var(--warn-soft); color: var(--warn); padding: 4px 10px; border-radius: 99px; }
+.admin-bar { display: flex; flex-shrink: 0; align-items: center; gap: 8px; margin-left: auto; }
+.admin-pill { white-space: nowrap; font-size: 12px; font-weight: 600; background: var(--accent-soft); color: var(--accent); padding: 4px 10px; border-radius: 99px; }
+.admin-dialog { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 22px; width: min(360px, calc(100vw - 32px)); }
+.admin-dialog::backdrop { background: rgb(0 0 0 / .45); }
+.admin-dialog h3 { margin: 0 0 14px; }
+.admin-dialog input { margin-bottom: 12px; }
+.admin-err { color: var(--bad); font-size: 13px; margin: 0 0 10px; }
+.admin-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .hero { padding: 40px 0 24px; max-width: 680px; }
 .hero h1 { font-size: clamp(26px, 4vw, 36px); letter-spacing: -.02em; }

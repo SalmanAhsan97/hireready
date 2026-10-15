@@ -680,11 +680,48 @@ async function downloadResume(markdownText, suffix, format) {
   document.readyState === "complete" ? hide() : addEventListener("load", hide, { once: true });
 })();
 
+// ---- Owner sign-in (full version, no daily limits; the session is an HttpOnly cookie) ----
+function setAdmin(on) {
+  state.admin = on;
+  $("#admin-pill").hidden = !on;
+  $("#admin-out").hidden = !on;
+  $("#admin-btn").hidden = on || !state.adminLogin;
+  if (on) $("#access-wrap").hidden = true;
+  else if (state.accessRequired) $("#access-wrap").hidden = false;
+}
+$("#admin-btn").addEventListener("click", () => { $("#admin-err").hidden = true; $("#admin-dialog").showModal(); $("#admin_user").focus(); });
+$("#admin-cancel").addEventListener("click", () => $("#admin-dialog").close());
+$("#admin-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const res = await fetch("/api/admin/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: $("#admin_user").value, password: $("#admin_pass").value }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    $("#admin-err").textContent = typeof d.detail === "string" ? d.detail : "Sign-in failed.";
+    $("#admin-err").hidden = false;
+    return;
+  }
+  $("#admin_pass").value = "";
+  $("#admin-dialog").close();
+  setAdmin(true);
+  toast("Signed in — full version unlocked");
+});
+$("#admin-out").addEventListener("click", async () => {
+  await fetch("/api/admin/logout", { method: "POST" });
+  setAdmin(false);
+  toast("Signed out");
+});
+
 $("#access_code").value = store.get("hireready_access_code");
 $("#jobs_location").value = store.get("hireready_jobs_location");
 api("/api/status").then((s) => {
   $("#demo-pill").hidden = !s.demo;
+  state.accessRequired = s.access_code_required;
+  state.adminLogin = s.admin_login;
   if (s.access_code_required) $("#access-wrap").hidden = false;
+  fetch("/api/admin").then((r) => r.json()).then((a) => setAdmin(a.admin)).catch(() => setAdmin(false));
   if (s.contact_email) state.contact = s.contact_email;
   const saved = store.get("hireready_jobs_country");
   $("#jobs_country").innerHTML = (s.job_countries || []).map((c) => `<option ${c === saved ? "selected" : ""}>${esc(c)}</option>`).join("");

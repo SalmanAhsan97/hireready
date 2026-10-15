@@ -36,8 +36,26 @@ PREVIEW_LIMIT = int(os.getenv("HIREREADY_PREVIEW_LIMIT", "3"))  # free previews 
 CONTACT_EMAIL = os.getenv("HIREREADY_CONTACT_EMAIL", "rnwedesign@gmail.com")
 
 
+# Owner sign-in: full version with no daily limits. Credentials live only in the environment.
+ADMIN_USER = os.getenv("HIREREADY_ADMIN_USER", "")
+ADMIN_PASSWORD = os.getenv("HIREREADY_ADMIN_PASSWORD", "")
+ADMIN_COOKIE = "hr_admin"
+ADMIN_MAX_AGE = 30 * 24 * 3600
+_login_failures: dict[str, int] = {}
+
+
+def _admin_token() -> str:
+    # changing the password invalidates every existing admin cookie
+    return hmac.new(f"{_SALT}:{ADMIN_PASSWORD}".encode(), f"admin:{ADMIN_USER}".encode(), hashlib.sha256).hexdigest()
+
+
+def is_admin(request: Request) -> bool:
+    return bool(ADMIN_USER and ADMIN_PASSWORD) and hmac.compare_digest(request.cookies.get(ADMIN_COOKIE, ""), _admin_token())
+
+
 def has_full_access(request: Request) -> bool:
-    return not ACCESS_CODE or hmac.compare_digest(request.headers.get("x-access-code", ""), ACCESS_CODE)
+    return (not ACCESS_CODE or is_admin(request)
+            or hmac.compare_digest(request.headers.get("x-access-code", ""), ACCESS_CODE))
 
 
 def require_access(request: Request):
@@ -87,7 +105,7 @@ async def enforce_limit(request: Request, action: str):
         "preview": (PREVIEW_LIMIT, ("preview",), "free previews"),
         "jobs": (JOBS_LIMIT, ("jobs",), "job searches"),
     }.get(action, (DAILY_LIMIT, ("analyze", "kit"), "runs"))
-    if limit <= 0:
+    if limit <= 0 or is_admin(request):
         return
     used = await cache.count_and_record_usage(_client_id(request), action, group=group)
     if used > limit:
@@ -106,7 +124,42 @@ def status():
         "preview_available": bool(ACCESS_CODE),
         "contact_email": CONTACT_EMAIL,
         "job_countries": jobs.COUNTRIES,
+        "admin_login": bool(ADMIN_USER and ADMIN_PASSWORD),
     }
+
+
+class AdminLogin(BaseModel):
+    username: str
+    password: str
+
+
+@app.get("/api/admin")
+def admin_status(request: Request):
+    return {"admin": is_admin(request)}
+
+
+@app.post("/api/admin/login")
+def admin_login(body: AdminLogin, request: Request, response: Response):
+    if not (ADMIN_USER and ADMIN_PASSWORD):
+        raise HTTPException(404, "Admin sign-in isn't set up on this server.")
+    client = _client_id(request)
+    if _login_failures.get(client, 0) >= 10:
+        raise HTTPException(429, "Too many failed sign-ins. Try again later.")
+    ok = hmac.compare_digest(body.username.strip().lower(), ADMIN_USER.lower()) & hmac.compare_digest(body.password, ADMIN_PASSWORD)
+    if not ok:
+        _login_failures[client] = _login_failures.get(client, 0) + 1
+        raise HTTPException(401, "Wrong username or password.")
+    _login_failures.pop(client, None)
+    response.set_cookie(ADMIN_COOKIE, _admin_token(), max_age=ADMIN_MAX_AGE, httponly=True,
+                        secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
+                        samesite="strict")
+    return {"admin": True}
+
+
+@app.post("/api/admin/logout")
+def admin_logout(response: Response):
+    response.delete_cookie(ADMIN_COOKIE)
+    return {"admin": False}
 
 
 @app.post("/api/analyze")

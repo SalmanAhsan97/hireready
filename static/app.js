@@ -240,13 +240,17 @@ function renderComparison(c, job) {
   $("#compare-results").hidden = false;
   $("#cmp-job").textContent = [c.job_title || job.title, c.company || job.company].filter(Boolean).join(" · ");
   $("#cmp-verdict").textContent = c.verdict;
-  $("#cmp-cards").innerHTML = c.entries.map((e) => {
+  $("#cmp-callout").classList.toggle("tie", c.tie);
+  $("#cmp-callout-label").textContent = c.tie ? "Even match" : "Verdict";
+  const callout = $("#cmp-callout");  // replay the entrance animation on every comparison
+  callout.style.animation = "none"; void callout.offsetWidth; callout.style.animation = "";
+  $("#cmp-cards").innerHTML = c.entries.map((e, i) => {
     const best = e.rank === 1 && !c.tie;
-    return `<div class="cmp-card ${best ? "best" : ""}">
-      <div class="cmp-top">${best ? `<span class="cmp-rank">★ Best fit</span>` : ""}
+    return `<div class="cmp-card ${best ? "best" : ""}" style="--i:${i}">
+      <div class="cmp-top">${best ? `<span class="cmp-rank"><span class="star">★</span> Best fit</span>` : ""}
         <span class="standing s-${esc(e.standing.split(" ")[0])}">${esc(CHANCES[e.standing] || e.standing)}</span></div>
       <div class="cmp-name">${esc(e.name)}</div>
-      <div class="cmp-score">${e.overall_score}<small>/100</small></div>
+      <div class="cmp-score"><span class="cmp-num" data-to="${e.overall_score}">0</span><small>/100</small></div>
       <div class="cmp-stats">
         <span>Must-haves: ${e.must_met} of ${e.must_total} met${e.must_partial ? `, ${e.must_partial} partly` : ""}</span>
         <span>Keywords word-for-word: ${e.keyword_pct}%</span>
@@ -257,9 +261,25 @@ function renderComparison(c, job) {
     </div>`;
   }).join("");
   $("#cmp-table").innerHTML = `<thead><tr><th>Requirement</th>${c.entries.map((e) => `<th title="${esc(e.name)}">${esc(e.name)}</th>`).join("")}</tr></thead>
-    <tbody>${c.rows.map((r) => `<tr><td>${esc(r.text)}${r.importance === "must" ? '<span class="cmp-must">must</span>' : ""}</td>${
+    <tbody>${c.rows.map((r, ri) => `<tr style="--r:${ri}"><td>${esc(r.text)}${r.importance === "must" ? '<span class="cmp-must">must</span>' : ""}</td>${
       r.statuses.map((st) => `<td><span class="mark ${STATUS_MARK[st][1]}" title="${STATUS_MARK[st][2]}" aria-label="${STATUS_MARK[st][2]}">${STATUS_MARK[st][0]}</span></td>`).join("")}</tr>`).join("")}</tbody>`;
+  countUp($$("#cmp-cards .cmp-num"));
   $("#compare-results").scrollIntoView({ behavior: "smooth" });
+}
+
+function countUp(els) {
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  els.forEach((el, i) => {
+    const to = +el.dataset.to;
+    if (reduce) { el.textContent = to; return; }
+    const start = performance.now() + 150 + i * 90, dur = 700;
+    const step = (now) => {
+      const t = Math.min(1, Math.max(0, (now - start) / dur));
+      el.textContent = Math.round(to * (1 - Math.pow(1 - t, 3)));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
 }
 
 async function submitCompare() {

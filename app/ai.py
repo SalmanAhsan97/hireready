@@ -25,6 +25,7 @@ from .models import (
     JobRequirements,
     Narrative,
     ChatMessage,
+    CompareResult,
     LinkedInProfile,
     ProfileFromPdf,
     ProfileNarrative,
@@ -251,11 +252,7 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
     if reqs and evidence:
         return reqs, evidence
     if reqs:
-        content = (
-            f"{block}\n\n<requirements>\n{reqs.model_dump_json(indent=1)}\n</requirements>\n\n"
-            f"<resume>\n{resume}\n</resume>\n\n{EVIDENCE_INSTRUCTIONS}"
-        )
-        evidence = await _parse(content, ResumeEvidence, effort="medium")
+        evidence = await _evidence(block, reqs, resume)
     else:
         content = f"{block}\n\n<resume>\n{resume}\n</resume>\n\n{EXTRACT_INSTRUCTIONS}"
         both = await _parse(content, Extraction, effort="medium")
@@ -263,6 +260,41 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
         await cache.put("jobs", job_key, reqs)
     await cache.put("evidence", pair_key, evidence)
     return reqs, evidence
+
+
+async def _evidence(block: str, reqs: JobRequirements, resume: str) -> ResumeEvidence:
+    content = (
+        f"{block}\n\n<requirements>\n{reqs.model_dump_json(indent=1)}\n</requirements>\n\n"
+        f"<resume>\n{resume}\n</resume>\n\n{EVIDENCE_INSTRUCTIONS}"
+    )
+    return await _parse(content, ResumeEvidence, effort="medium")
+
+
+async def compare_resumes(resumes: list[tuple[str, str]], job: Job) -> CompareResult:
+    """Score 2-4 resumes against ONE fixed set of requirements, so the numbers are comparable.
+    No narrative call: the comparison and verdict are computed in code."""
+    if demo_mode():
+        from . import demo
+        extraction = Extraction.model_validate(demo.DEMO_EXTRACTION)
+        reqs, evidence = extraction.job, [extraction.resume] * len(resumes)
+    else:
+        reqs, first = await extract(resumes[0][1], job)  # fixes (and caches) the job's requirements
+        block = _job_block(job)
+
+        async def one(text: str) -> ResumeEvidence:
+            key = _key(block, text)
+            ev = await cache.get("evidence", key, ResumeEvidence)
+            if not ev:
+                ev = await _evidence(block, reqs, text)
+                await cache.put("evidence", key, ev)
+            return ev
+
+        evidence = [first, *await asyncio.gather(*(one(text) for _, text in resumes[1:]))]
+    scored = [(name, scoring.compute(text, reqs, ev)) for (name, text), ev in zip(resumes, evidence)]
+    result = scoring.compare(reqs, scored)
+    if not result.job_title:
+        result.job_title, result.company = job.title, job.company
+    return result
 
 
 def _inline_refs(schema: dict) -> dict:

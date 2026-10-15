@@ -48,6 +48,7 @@ Job seekers usually get one of two things: a vague "78% match" that changes ever
 | **LinkedIn review** | Profile link or LinkedIn "Save to PDF" export + target title | Headline, About, keyword coverage, experience descriptions and titles, career timeline, skills, network, credibility, completeness, plus rewrites |
 | **Resume chat** | Plain-language requests ("make my summary punchier") | Edited resume with live preview and .docx export |
 | **Application kit** | Analysis + job | Tailored resume, cover letter, LinkedIn note, recruiter DM, hiring-manager email, interview prep |
+| **Compare resumes** (Pro) | 2–4 resumes + one job link or description | Ranked best fit, shortlist chances, must-haves and keyword match per resume, what only each resume shows, and a requirement-by-requirement grid |
 
 ## The interesting part: deterministic scoring
 
@@ -95,7 +96,11 @@ static/ (vanilla JS)  ──►  FastAPI  ──►  parsing.py   PDF/DOCX text 
 | Missing keywords, all ranked edits, strengths, gaps, red flags | first of each | ✓ |
 | Explanations and rewrites written by the premium model | — | ✓ |
 | Resume chat, application kit, .docx and PDF export | — | ✓ |
+| **Resume comparison:** 2–4 resumes against one job, best fit and shortlist chances | — | ✓ |
+| Job suggestions that fit a resume (Indeed) | — | ✓ |
 | Job links read with Bright Data + Apify (fuller postings) | public page | ✓ |
+
+Full plan details, cost drivers and rollout: [docs/monetization.md](docs/monetization.md).
 
 **Where the subscription goes.** Most of each subscription pays for what makes the paid output better: the premium model for writing (`HIREREADY_PREMIUM_MODEL`), Bright Data and Apify credits for complete job postings and profiles, and hosting and storage. The rest of it funds refining the scoring engine, such as a labelled set of resume/job pairs to calibrate weights against real screening outcomes. A small share keeps the project maintained.
 

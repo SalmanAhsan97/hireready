@@ -397,3 +397,33 @@ textarea { resize: vertical; }
 .h-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-target, .h-date { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-empty { color: var(--muted); font-size: 14px; }
+
+/* compare resumes (Pro) */
+.pro-tag { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; background: var(--accent); color: var(--accent-ink); padding: 1px 6px; border-radius: 99px; margin-left: 4px; vertical-align: 1px; }
+#compare-fields input[type=file] { font: inherit; font-size: 13px; margin-bottom: 4px; }
+.compare-picked { list-style: none; padding: 0; margin: 6px 0 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+.compare-picked li { font-size: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 99px; padding: 3px 10px; }
+.cmp-head h2 { margin: 0 0 4px; }
+.cmp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 14px 0 22px; }
+.cmp-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: grid; gap: 8px; align-content: start; }
+.cmp-card.best { border: 2px solid var(--good); }
+.cmp-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cmp-rank { font-size: 12px; font-weight: 700; color: var(--muted); }
+.cmp-card.best .cmp-rank { color: var(--good); }
+.cmp-name { font-weight: 600; overflow-wrap: anywhere; }
+.cmp-score { font-size: 32px; font-weight: 700; line-height: 1; }
+.cmp-score small { font-size: 13px; color: var(--muted); font-weight: 500; }
+.cmp-stats { font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
+.cmp-sub { font-size: 12px; font-weight: 600; margin-top: 4px; }
+.cmp-list { margin: 0; padding-left: 18px; font-size: 13px; }
+.cmp-table-wrap { overflow-x: auto; }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cmp-table th, .cmp-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: center; }
+.cmp-table th:first-child, .cmp-table td:first-child { text-align: left; }
+.cmp-table th { font-weight: 600; white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.cmp-must { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--bad); margin-left: 6px; }
+.st-met { color: var(--good); font-weight: 700; }
+.st-partial { color: var(--warn); font-weight: 700; }
+.st-missing { color: var(--bad); }
+.cmp-card .standing { text-transform: none; white-space: nowrap; font-size: 12px; }
+.cmp-rank { white-space: nowrap; }

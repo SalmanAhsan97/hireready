@@ -310,6 +310,47 @@ class KitRequest(BaseModel):
     analysis: Analysis
 
 
+@app.post("/api/compare", dependencies=[Depends(require_access)])
+async def compare(
+    request: Request,
+    resumes: list[UploadFile] = File(...),
+    job_url: str = Form(""),
+    job_text: str = Form(""),
+):
+    """Premium: rank 2-4 resumes against the same job."""
+    if not 2 <= len(resumes) <= 4:
+        raise HTTPException(400, "Add 2 to 4 resumes to compare.")
+    if not job_text.strip() and not job_url.strip():
+        raise HTTPException(400, "Add the job link or paste the job description.")
+    texts, names = [], []
+    for f in resumes:
+        data = await f.read()
+        if len(data) > MAX_UPLOAD:
+            raise HTTPException(413, f"{f.filename} is over 5 MB.")
+        try:
+            text, _ = extract_resume(f.filename or "", data)
+        except ValueError as e:
+            raise HTTPException(400, f"{f.filename}: {e}")
+        name = f.filename or f"Resume {len(names) + 1}"
+        while name in names:  # same file name twice: keep the columns distinguishable
+            name += " (2)"
+        texts.append(text); names.append(name)
+    for _ in resumes:
+        await enforce_limit(request, "analyze")
+    if job_text.strip():
+        job = Job(url=job_url.strip(), description=job_text.strip())
+    else:
+        try:
+            job = await fetch_job(job_url, premium=True)
+        except JobFetchError as e:
+            raise HTTPException(422, {"code": "job_fetch_failed", "message": str(e)})
+    try:
+        result = await ai.compare_resumes(list(zip(names, texts)), job)
+    except ai.AIError as e:
+        raise HTTPException(502, str(e))
+    return {"job": job, "comparison": result, "demo": ai.demo_mode()}
+
+
 @app.post("/api/apply-kit", dependencies=[Depends(require_access)])
 async def apply_kit(req: KitRequest, request: Request):
     if not req.job.description:

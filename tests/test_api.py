@@ -125,3 +125,31 @@ def test_admin_runs_are_saved_and_can_be_previewed(admin, monkeypatch, tmp_path)
     run = admin.get(f"/api/history/{items[0]['key']}").json()
     assert run["resume_text"].startswith(demo.DEMO_RESUME[:40]) and run["analysis"]["mode"] == "job"
     assert admin.get("/api/history/not-a-key").status_code == 404
+
+
+def _resume_file(name: str, extra: str = ""):
+    return ("resumes", (name, (demo.DEMO_RESUME + extra).encode(), "text/plain"))
+
+
+def test_compare_ranks_resumes_for_the_same_job():
+    weak = "\n".join(l for l in demo.DEMO_RESUME.splitlines() if "Figma" not in l and "research" not in l.lower())
+    r = client.post("/api/compare", data={"job_text": "Senior Product Designer at Acme Cloud"},
+                    files=[_resume_file("strong.txt"), ("resumes", ("weak.txt", weak.encode(), "text/plain"))])
+    assert r.status_code == 200, r.text
+    c = r.json()["comparison"]
+    assert [e["name"] for e in c["entries"]] == ["strong.txt", "weak.txt"]
+    assert c["entries"][0]["overall_score"] > c["entries"][1]["overall_score"] and not c["tie"]
+    assert c["verdict"].startswith("strong.txt is the stronger fit")
+    assert c["rows"] and all(len(row["statuses"]) == 2 for row in c["rows"])
+
+
+def test_identical_resumes_are_a_tie_and_compare_needs_two(monkeypatch):
+    c = client.post("/api/compare", data={"job_text": "Senior Product Designer"},
+                    files=[_resume_file("a.txt"), _resume_file("b.txt")]).json()["comparison"]
+    assert c["tie"] and "even match" in c["verdict"]
+    assert client.post("/api/compare", data={"job_text": "x"}, files=[_resume_file("a.txt")]).status_code == 400
+
+
+def test_compare_is_a_paid_feature(access_code):
+    r = client.post("/api/compare", data={"job_text": "x"}, files=[_resume_file("a.txt"), _resume_file("b.txt")])
+    assert r.status_code == 401

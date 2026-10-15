@@ -191,7 +191,8 @@ function setFormMode(mode) {
   $$(".mode-tab").forEach((t) => t.classList.toggle("active", t.dataset.mode === mode));
   $("#resume-fields").hidden = mode !== "resume";
   $("#linkedin-fields").hidden = mode !== "linkedin";
-  $("#analyze-btn").textContent = mode === "resume" ? "Score my resume" : "Review my profile";
+  $("#compare-fields").hidden = mode !== "compare";
+  $("#analyze-btn").textContent = { resume: "Score my resume", linkedin: "Review my profile", compare: "Compare resumes" }[mode];
   showError("");
 }
 $$(".mode-tab").forEach((t) => t.addEventListener("click", () => setFormMode(t.dataset.mode)));
@@ -228,10 +229,74 @@ async function submitLinkedIn() {
   }
 }
 
+// ---- Compare resumes (Pro) ----
+$("#compare_files").addEventListener("change", () => {
+  $("#compare-picked").innerHTML = [...$("#compare_files").files].map((f) => `<li>${esc(f.name)}</li>`).join("");
+});
+const STATUS_MARK = { met: ["✓", "st-met"], partial: ["½", "st-partial"], missing: ["✗", "st-missing"] };
+const CHANCES = { "top candidate": "Strong shortlist chances", competitive: "Good shortlist chances", possible: "Fair chances", "long shot": "Low chances" };
+
+function renderComparison(c, job) {
+  $("#compare-results").hidden = false;
+  $("#cmp-job").textContent = [c.job_title || job.title, c.company || job.company].filter(Boolean).join(" · ");
+  $("#cmp-verdict").textContent = c.verdict;
+  $("#cmp-cards").innerHTML = c.entries.map((e) => {
+    const best = e.rank === 1 && !c.tie;
+    return `<div class="cmp-card ${best ? "best" : ""}">
+      <div class="cmp-top"><span class="cmp-rank">${best ? "★ Best fit" : "#" + e.rank}</span>
+        <span class="standing s-${esc(e.standing.split(" ")[0])}">${esc(CHANCES[e.standing] || e.standing)}</span></div>
+      <div class="cmp-name">${esc(e.name)}</div>
+      <div class="cmp-score">${e.overall_score}<small>/100</small></div>
+      <div class="cmp-stats">
+        <span>Must-haves: ${e.must_met} of ${e.must_total} met${e.must_partial ? `, ${e.must_partial} partly` : ""}</span>
+        <span>Keywords word-for-word: ${e.keyword_pct}%</span>
+        ${e.cap_reason ? `<span>${esc(e.cap_reason)}</span>` : ""}
+      </div>
+      ${e.unique_strengths.length ? `<div class="cmp-sub">Only this resume shows</div><ul class="cmp-list">${e.unique_strengths.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${e.missing_keywords.length ? `<div class="cmp-sub">Missing keywords</div><div class="cmp-stats">${esc(e.missing_keywords.join(", "))}</div>` : ""}
+    </div>`;
+  }).join("");
+  $("#cmp-table").innerHTML = `<thead><tr><th>Requirement</th>${c.entries.map((e) => `<th title="${esc(e.name)}">${esc(e.name)}</th>`).join("")}</tr></thead>
+    <tbody>${c.rows.map((r) => `<tr><td>${esc(r.text)}${r.importance === "must" ? '<span class="cmp-must">must</span>' : ""}</td>${
+      r.statuses.map((st) => `<td class="${STATUS_MARK[st][1]}">${STATUS_MARK[st][0]}</td>`).join("")}</tr>`).join("")}</tbody>`;
+  $("#compare-results").scrollIntoView({ behavior: "smooth" });
+}
+
+async function submitCompare() {
+  const files = [...$("#compare_files").files], url = $("#compare_url").value.trim(), text = $("#compare_text").value.trim();
+  if (files.length < 2 || files.length > 4) return showError("Pick 2 to 4 resumes to compare.");
+  if (!url && !text) return showError("Add the job link or paste the job description.");
+  const fd = new FormData();
+  files.forEach((f) => fd.append("resumes", f));
+  fd.append("job_url", url);
+  fd.append("job_text", text);
+  $("#analyze-btn").disabled = true;
+  $("#results").hidden = $("#kit").hidden = $("#compare-results").hidden = true;
+  $("#input-card").after($("#loading"));
+  loader.start(["Uploading the resumes", ...(url && !text ? ["Fetching the job posting"] : []), "Reading the job's requirements",
+    "Checking each resume against them", "Ranking the resumes"], 40 + 15 * files.length, { upload: true });
+  let ok = false;
+  try {
+    const data = await postForm("/api/compare", fd, (f) => loader.setUpload(f));
+    await loader.finish();
+    ok = true;
+    store.set("hireready_access_code", $("#access_code").value.trim());
+    renderComparison(data.comparison, data.job);
+  } catch (err) {
+    showError(err.message);
+    if (err.code === "access_code") needAccessCode();
+    if (err.code === "job_fetch_failed") { $("#compare-paste").open = true; $("#compare_text").focus(); }
+  } finally {
+    if (!ok) loader.stop();
+    $("#analyze-btn").disabled = false;
+  }
+}
+
 $("#analyze-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   showError("");
   if (formMode === "linkedin") return submitLinkedIn();
+  if (formMode === "compare") return submitCompare();
   const url = $("#job_url").value.trim(), text = $("#job_text").value.trim();
   if (!fileInput.files[0]) return showError("Add your resume first.");
   const withJob = !!(url || text);
@@ -279,6 +344,7 @@ function renderAnalysis() {
   const a = state.analysis, job = state.job;
   setStep(2);
   $("#results").hidden = false;
+  $("#compare-results").hidden = true;
 
   const score = Math.max(0, Math.min(100, a.overall_score));
   const color = score >= 80 ? "var(--good)" : score >= 65 ? "var(--good)" : score >= 45 ? "var(--warn)" : "var(--bad)";

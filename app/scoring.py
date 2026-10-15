@@ -13,6 +13,9 @@ from .synonyms import variants
 from .models import (
     Analysis,
     CategoryScore,
+    CompareEntry,
+    CompareResult,
+    CompareRow,
     Coverage,
     Evidence,
     JobRequirements,
@@ -346,6 +349,50 @@ def assemble(card: Scorecard, narrative: Narrative, candidate_name: str, job_tit
         requirements=card.requirements,
         coverage=card.coverage,
     )
+
+
+# ---- Comparing resumes for one job (same requirements for every resume, so the scores are comparable) ----
+
+def compare(job: JobRequirements, scored: list[tuple[str, Scorecard]]) -> CompareResult:
+    def strength(item):
+        name, card = item
+        cov = card.coverage
+        return (-card.overall, -(cov.must_pct if cov else 0), -(cov.keyword_pct if cov else 0), name.lower())
+
+    ranked = sorted(scored, key=strength)
+    met_by = {}
+    for name, card in ranked:
+        for r in card.requirements:
+            if r.status == "met":
+                met_by.setdefault(r.id, set()).add(name)
+    entries = []
+    for i, (name, card) in enumerate(ranked, 1):
+        cov = card.coverage
+        unique = [r.text for r in card.requirements if met_by.get(r.id) == {name}]
+        entries.append(CompareEntry(
+            name=name, rank=i, overall_score=card.overall, standing=card.standing,
+            must_met=cov.must_met, must_partial=cov.must_partial, must_total=cov.must_total, keyword_pct=cov.keyword_pct,
+            cap_reason=cov.cap_reason, matched_keywords=card.matched_keywords[:12], missing_keywords=card.missing_keywords[:8],
+            unique_strengths=unique[:6],
+        ))
+    first = ranked[0][1]
+    by_id = [{r.id: r.status for r in card.requirements} for _, card in ranked]
+    rows = [CompareRow(text=r.text, importance=r.importance, statuses=[ids.get(r.id, "missing") for ids in by_id])
+            for r in first.requirements]
+
+    best, runner = entries[0], entries[1]
+    tie = strength(ranked[0])[:3] == strength(ranked[1])[:3]
+    if tie:
+        verdict = (f"{best.name} and {runner.name} are an even match for this job ({best.overall_score}/100, "
+                   f"{best.must_met} of {best.must_total} must-haves each). Pick on the requirements below.")
+    else:
+        gap = best.overall_score - runner.overall_score
+        why = [f"{best.must_met} of {best.must_total} must-haves met (vs {runner.must_met})"] if best.must_met != runner.must_met else []
+        if best.keyword_pct != runner.keyword_pct:
+            why.append(f"{best.keyword_pct}% of the posting's keywords word-for-word (vs {runner.keyword_pct}%)")
+        verdict = (f"{best.name} is the stronger fit: {best.overall_score}/100 vs {runner.overall_score}/100"
+                   + (f" (+{gap})" if gap else "") + (f", with {' and '.join(why)}" if why else "") + ".")
+    return CompareResult(job_title=job.job_title, company=job.company, verdict=verdict, tie=tie, entries=entries, rows=rows)
 
 
 # ---- Resume-only mode (no job posting) ----

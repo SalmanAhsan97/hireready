@@ -270,6 +270,36 @@ class Analysis(BaseModel):
     warnings: List[str] = []  # problems with the uploaded file itself (e.g. hidden text), found in code
 
 
+class CompareEntry(BaseModel):
+    name: str  # file name of the resume
+    rank: int  # 1 = best fit
+    overall_score: int
+    standing: str  # the shortlist-chance tier: top candidate / competitive / possible / long shot
+    must_met: int
+    must_partial: int
+    must_total: int
+    keyword_pct: int
+    cap_reason: str = ""
+    matched_keywords: List[str]
+    missing_keywords: List[str]
+    unique_strengths: List[str]  # requirements only this resume meets
+
+
+class CompareRow(BaseModel):
+    text: str
+    importance: Literal["must", "nice"]
+    statuses: List[Status]  # one per entry, in rank order
+
+
+class CompareResult(BaseModel):
+    job_title: str
+    company: str
+    verdict: str
+    tie: bool
+    entries: List[CompareEntry]
+    rows: List[CompareRow]
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str

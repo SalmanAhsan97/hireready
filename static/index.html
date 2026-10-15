@@ -9,6 +9,22 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div id="splash" class="splash" aria-hidden="true">
+    <div class="splash-inner">
+      <svg class="splash-mark" viewBox="0 0 120 120">
+        <circle class="sp-ring-bg" cx="60" cy="60" r="54"/>
+        <circle class="sp-ring" cx="60" cy="60" r="54"/>
+        <rect class="sp-tile" x="26" y="26" width="68" height="68" rx="18"/>
+        <path class="sp-doc" d="M46 40h20l10 10v30a4 4 0 0 1-4 4H46a4 4 0 0 1-4-4V44a4 4 0 0 1 4-4z"/>
+        <path class="sp-lines" d="M49 58h18M49 65h22M49 72h14"/>
+        <rect class="sp-scan" x="42" y="40" width="34" height="3" rx="1.5"/>
+        <path class="sp-check" d="M64 76l6 6 13-15"/>
+      </svg>
+      <div class="splash-word">HireReady</div>
+      <div class="splash-tag">Getting you hire-ready…</div>
+    </div>
+  </div>
+
   <header class="top">
     <div class="wrap top-inner">
       <div class="brand"><span class="logo">H</span>HireReady</div>
@@ -19,7 +35,7 @@
   <main class="wrap">
     <section class="hero">
       <h1>See how you stack up — then become the obvious hire.</h1>
-      <p>Upload your resume and drop in a LinkedIn job link. You'll get a match score, the exact edits to make, and a ready-to-send application kit.</p>
+      <p>Upload your resume for an instant score and the exact edits to make. Add a LinkedIn job link to see how you match that role and get a ready-to-send application kit.</p>
       <ol class="steps">
         <li class="active" data-step="1"><span>1</span>Upload</li>
         <li data-step="2"><span>2</span>Score &amp; fix</li>
@@ -33,13 +49,16 @@
         <label class="field-label">Your resume</label>
         <label class="drop" id="drop">
           <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt,.md" hidden>
-          <div class="drop-icon">⬆</div>
-          <div id="drop-text"><strong>Drop your resume here</strong> or click to browse<br><small>PDF, DOCX or TXT · max 5 MB</small></div>
+          <div class="drop-icon" id="drop-icon">⬆</div>
+          <div class="drop-body">
+            <div id="drop-text"><strong>Drop your resume here</strong> or click to browse<br><small>PDF, DOCX or TXT · max 5 MB</small></div>
+            <div class="file-progress" id="file-progress" hidden><div></div></div>
+          </div>
         </label>
 
-        <label class="field-label" for="job_url">LinkedIn job link</label>
+        <label class="field-label" for="job_url">LinkedIn job link <span class="optional">optional</span></label>
         <input type="url" id="job_url" name="job_url" placeholder="https://www.linkedin.com/jobs/view/1234567890/">
-        <small class="hint">Works with linkedin.com/jobs/view/… links and most other job boards.</small>
+        <small class="hint">Skip it for a general resume score, or add it to see how you match that job. Works with linkedin.com/jobs/view/… links and most job boards.</small>
 
         <details id="paste-box">
           <summary>Or paste the job description</summary>
@@ -57,9 +76,19 @@
       </form>
     </section>
 
-    <div id="loading" class="loading" hidden>
-      <div class="spinner"></div>
-      <div id="loading-text">Reading the job posting…</div>
+    <div id="loading" class="card loader" hidden>
+      <svg class="loader-art" viewBox="0 0 96 96" aria-hidden="true">
+        <rect class="la-doc" x="24" y="14" width="48" height="64" rx="7"/>
+        <path class="la-lines" d="M33 32h30M33 40h30M33 48h22M33 56h28M33 64h16"/>
+        <rect class="la-scan" x="24" y="14" width="48" height="10" rx="5"/>
+        <g class="la-up"><circle cx="72" cy="74" r="13"/><path d="M72 81v-13M66 73l6-6 6 6"/></g>
+      </svg>
+      <div class="loader-body">
+        <div class="loader-title" id="loading-text">Uploading your resume…</div>
+        <div class="progress"><div id="progress-fill"></div></div>
+        <div class="progress-meta"><span id="progress-label">0%</span><span id="progress-elapsed"></span></div>
+        <ol class="stages" id="stages"></ol>
+      </div>
     </div>
 
     <!-- Step 2 -->
@@ -84,14 +113,14 @@
       <div class="grid-2">
         <div class="card">
           <h2>Score breakdown</h2>
-          <p class="muted">Calculated from the requirement check below — the same resume and job always get the same score.</p>
+          <p class="muted" id="breakdown-note">Calculated from the requirement check below — the same resume and job always get the same score.</p>
           <div id="categories"></div>
         </div>
         <div class="card">
           <h2>Keywords</h2>
-          <h3 class="sub good">In your resume</h3>
+          <h3 class="sub good" id="kw-have-title">In your resume</h3>
           <div class="chips" id="kw-matched"></div>
-          <h3 class="sub bad">Missing from your resume</h3>
+          <h3 class="sub bad" id="kw-miss-title">Missing from your resume</h3>
           <div class="chips" id="kw-missing"></div>
         </div>
       </div>
@@ -116,8 +145,8 @@
 
       <div class="card cta">
         <div>
-          <h2>Ready to apply?</h2>
-          <p class="muted">Get a tailored resume, cover letter, recruiter outreach and interview prep for this exact role.</p>
+          <h2 id="cta-title">Ready to apply?</h2>
+          <p class="muted" id="cta-text">Get a tailored resume, cover letter, recruiter outreach and interview prep for this exact role.</p>
         </div>
         <button class="btn primary" id="kit-btn">Build my application kit</button>
       </div>

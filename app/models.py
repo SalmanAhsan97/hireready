@@ -86,6 +86,50 @@ class Narrative(BaseModel):
     changes: List[Change]
 
 
+# ---- Resume-only mode (no job given): Claude extracts facts, code scores general resume quality ----
+
+class ResumeRole(BaseModel):
+    title: str
+    company: str
+    start: str  # as written, "" if missing
+    end: str  # as written ("present" allowed), "" if missing
+    bullets: int  # number of bullet points / achievement lines under this role
+
+
+class ResumeProfile(BaseModel):
+    candidate_name: str
+    target_role: str  # the role this resume is best positioned for
+    seniority: Literal["entry", "mid", "senior", "lead", "executive"]
+    hard_skills: List[str]  # tools/skills exactly as written in the resume
+    expected_keywords: List[str]  # terms recruiters and ATS expect for target_role
+    roles: List[ResumeRole]
+
+
+ResumeCategoryName = Literal[
+    "ATS keyword coverage",
+    "Impact & quantified results",
+    "Action-oriented bullets",
+    "Clarity & formatting",
+    "Skills section",
+    "Experience detail",
+    "Contact & profile",
+]
+
+
+class ResumeCategoryRationale(BaseModel):
+    name: ResumeCategoryName
+    rationale: str
+
+
+class ResumeNarrative(BaseModel):
+    verdict: str
+    rationales: List[ResumeCategoryRationale]
+    strengths: List[str]
+    gaps: List[str]
+    red_flags: List[str]
+    changes: List[Change]
+
+
 # ---- What the API returns ----
 
 class CategoryScore(BaseModel):
@@ -137,6 +181,7 @@ class Analysis(BaseModel):
     changes: List[Change]
     requirements: List[RequirementResult] = []
     coverage: Optional[Coverage] = None
+    mode: Literal["job", "resume"] = "job"  # "resume" = scored without a job posting
 
 
 class TalkingPoint(BaseModel):

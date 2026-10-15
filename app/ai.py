@@ -15,7 +15,17 @@ import httpx
 from pydantic import ValidationError
 
 from . import cache, scoring
-from .models import Analysis, ApplyKit, Extraction, Job, JobRequirements, Narrative, ResumeEvidence
+from .models import (
+    Analysis,
+    ApplyKit,
+    Extraction,
+    Job,
+    JobRequirements,
+    Narrative,
+    ResumeEvidence,
+    ResumeNarrative,
+    ResumeProfile,
+)
 
 MODEL = os.getenv("HIREREADY_MODEL", "claude-opus-5-5")
 GEMINI_MODEL = os.getenv("HIREREADY_GEMINI_MODEL", "gemini-flash-latest")
@@ -106,6 +116,30 @@ location/visa issues stated in the posting). Empty list if none.
 candidate can truthfully strengthen, then missing keywords, then quantifying results. \
 `suggested` is ready-to-paste replacement text."""
 
+RESUME_EXTRACT_INSTRUCTIONS = """No job posting was given. Extract the facts used to score this resume on its own. Do not score anything.
+
+- target_role: the job title this resume is best positioned for, based on the most recent roles.
+- seniority: the level that title implies for this candidate.
+- hard_skills: every concrete tool, technology, method or domain skill named in the resume, copied exactly as written.
+- expected_keywords: 15 terms that recruiters and ATS filters most commonly look for in resumes for target_role at \
+this seniority (tools, methods, domain terms). Include them whether or not this resume has them; use the most \
+common short spelling (e.g. "Figma", "A/B testing", "SQL").
+- roles: every position in the experience section, with start/end exactly as written ("" if missing) and the \
+number of bullet or achievement lines under it."""
+
+RESUME_NARRATIVE_INSTRUCTIONS = """No job posting was given, so this is a general resume review for the target role \
+in the scorecard. The scorecard above was computed by code. The scores are final: explain them, don't re-score.
+
+- rationales: one per category (all seven), 1-2 sentences explaining that category's score, naming specific \
+resume lines.
+- verdict: one or two plain sentences consistent with the overall score, and mention that adding a job link \
+gives a match score for a specific role.
+- strengths / gaps: 3-5 each, concrete.
+- red_flags: things recruiters commonly reject on (unexplained gaps, job-hopping, typos, missing dates). \
+Empty list if none.
+- changes: 6-12 specific edits, highest impact first: missing expected keywords the candidate can truthfully \
+add, quantifying results, stronger action verbs, then structure. `suggested` is ready-to-paste text."""
+
 KIT_INSTRUCTIONS = """The candidate has the analysis above. Build their application kit so they stand out \
 as a top candidate for this specific role.
 
@@ -195,16 +229,17 @@ async def _gemini_parse(content: str, schema, effort: str):
     headers = {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}
 
     async def generate(http: httpx.AsyncClient) -> httpx.Response:
-        """Free-tier Gemini is often briefly overloaded (503): back off, then try the lighter model."""
+        """Free-tier Gemini is often briefly overloaded (503) or over its per-minute quota (429):
+        back off, then try the lighter model, which has its own quota."""
         resp = None
         for model in dict.fromkeys([GEMINI_MODEL, GEMINI_FALLBACK]):
-            for delay in (0, 2, 5):
+            for delay in (0, 3, 8):
                 await asyncio.sleep(delay)
                 try:
                     resp = await http.post(f"{GEMINI_API}/{model}:generateContent", headers=headers, json=body)
                 except httpx.HTTPError:
                     continue
-                if resp.status_code not in (500, 502, 503, 504):
+                if resp.status_code not in (429, 500, 502, 503, 504):
                     return resp
         if resp is None:
             raise AIError("Couldn't reach the Gemini API. Check your connection.")
@@ -216,7 +251,7 @@ async def _gemini_parse(content: str, schema, effort: str):
             if resp.status_code in (401, 403):
                 raise AIError("The Gemini API key is invalid. Check GEMINI_API_KEY.")
             if resp.status_code == 429:
-                raise AIError("Gemini's free-tier limit was hit. Try again in a minute.")
+                raise AIError("HireReady is busy right now. Try again in a minute.")
             if resp.status_code != 200:
                 raise AIError(f"Gemini is busy right now ({resp.status_code}). Try again in a minute.")
             data = resp.json()
@@ -276,7 +311,7 @@ def _scorecard_block(card: scoring.Scorecard) -> str:
         "overall_score": card.overall,
         "standing": card.standing,
         "categories": [c.model_dump(exclude={"rationale"}) for c in card.categories],
-        "coverage": card.coverage.model_dump(),
+        "coverage": card.coverage.model_dump() if card.coverage else None,
         "requirements": [r.model_dump() for r in card.requirements],
     }
     return f"<scorecard>\n{json.dumps(data, indent=1)}\n</scorecard>"
@@ -309,6 +344,34 @@ async def analyze(resume: str, job: Job) -> Analysis:
         job_title=reqs.job_title or job.title,
         company=reqs.company or job.company,
     )
+
+
+async def analyze_resume(resume: str) -> Analysis:
+    """General resume score when no job is given. Same split: model extracts facts, code scores."""
+    if demo_mode():
+        from . import demo
+        resume = demo.DEMO_RESUME
+        profile = ResumeProfile.model_validate(demo.DEMO_PROFILE)
+    else:
+        key = _key("resume-profile", resume)
+        profile = await cache.get("profiles", key, ResumeProfile)
+        if not profile:
+            content = f"<resume>\n{resume}\n</resume>\n\n{RESUME_EXTRACT_INSTRUCTIONS}"
+            profile = await _parse(content, ResumeProfile, effort="medium")
+            await cache.put("profiles", key, profile)
+
+    card = scoring.compute_resume(resume, profile)
+
+    if demo_mode():
+        narrative = ResumeNarrative.model_validate(demo.DEMO_RESUME_NARRATIVE)
+    else:
+        content = (
+            f"<resume>\n{resume}\n</resume>\n\n<target_role>{profile.target_role}</target_role>\n\n"
+            f"{_scorecard_block(card)}\n\n{RESUME_NARRATIVE_INSTRUCTIONS}"
+        )
+        narrative = await _parse(content, ResumeNarrative, effort="medium")
+
+    return scoring.assemble_resume(card, narrative, profile)
 
 
 async def build_kit(resume: str, job: Job, analysis: Analysis) -> ApplyKit:

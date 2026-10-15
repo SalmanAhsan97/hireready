@@ -111,6 +111,55 @@ DEMO_NARRATIVE = {
     ],
 }
 
+# Resume-only mode (no job link): facts the model would extract from DEMO_RESUME.
+DEMO_PROFILE = {
+    "candidate_name": "Demo Candidate",
+    "target_role": "Product Designer",
+    "seniority": "mid",
+    "hard_skills": ["Figma", "Sketch", "Miro", "prototyping", "user research", "usability testing", "journey mapping", "wireframes", "user flows"],
+    "expected_keywords": [
+        "Figma", "prototyping", "user research", "usability testing", "design systems", "wireframes",
+        "interaction design", "accessibility", "A/B testing", "journey mapping", "information architecture",
+        "user flows", "stakeholder management", "design thinking", "cross-functional",
+    ],
+    "roles": [
+        {"title": "Product Designer", "company": "Brightly", "start": "2021", "end": "present", "bullets": 6},
+        {"title": "UX Designer", "company": "Northwind Studio", "start": "2019", "end": "2021", "bullets": 3},
+    ],
+}
+
+DEMO_RESUME_NARRATIVE = {
+    "verdict": "A solid, well-structured product design resume that undersells its impact and misses several keywords recruiters search for. Add a job link to see how it matches a specific role.",
+    "rationales": [
+        {"name": "ATS keyword coverage", "rationale": "Core terms like Figma, prototyping and user research are there, but design systems, accessibility and A/B testing — standard for this role — never appear."},
+        {"name": "Impact & quantified results", "rationale": "Only the usability-testing bullet has a number; the rest describe duties rather than outcomes."},
+        {"name": "Action-oriented bullets", "rationale": "Most bullets open with strong verbs like Led, Built and Designed; 'Worked on UI components' is the one weak opener."},
+        {"name": "Clarity & formatting", "rationale": "Clean single-column layout with standard sections, but at under 250 words it leaves out detail recruiters look for."},
+        {"name": "Skills section", "rationale": "Nine concrete tools and methods are named; adding a few more you genuinely use would round it out."},
+        {"name": "Experience detail", "rationale": "Both roles have dates and at least three bullets, which is exactly what recruiters expect."},
+        {"name": "Contact & profile", "rationale": "Email, phone and a summary are present, but there's no LinkedIn profile link."},
+    ],
+    "strengths": [
+        "Clear, dated work history with two relevant design roles.",
+        "Hands-on research practice: interviews, usability testing and journey mapping.",
+        "Concrete tool list that ATS filters can match.",
+    ],
+    "gaps": [
+        "Almost no measurable results — only one bullet has a number.",
+        "No mention of design systems or accessibility, both standard for product designers.",
+        "No LinkedIn profile link and a generic summary.",
+    ],
+    "red_flags": [],
+    "changes": [
+        {"priority": "high", "section": "Experience — Brightly", "issue": "Design-system work is described as a vague duty.", "current": "Worked on UI components for the web app.", "suggested": "Built and documented [N] reusable components in Brightly's Figma design system, cutting new-feature design time by [X%].", "why": "Adds the 'design systems' keyword with a measurable outcome."},
+        {"priority": "high", "section": "Summary", "issue": "Generic summary.", "current": "Passionate designer who loves solving problems.", "suggested": "Product designer with 5 years in SaaS, specialising in research-led interaction design, prototyping and accessible design systems.", "why": "Front-loads the keywords recruiters search for."},
+        {"priority": "high", "section": "Experience — Northwind Studio", "issue": "Results aren't quantified.", "current": "Designed responsive marketing sites and dashboards for small business clients.", "suggested": "Designed responsive sites and dashboards for [N] small-business clients, lifting conversion by [X%] on average.", "why": "Recruiters skim for outcomes; numbers make them stick."},
+        {"priority": "medium", "section": "Experience — Brightly", "issue": "Weak opener.", "current": "Collaborated with engineers and product managers on sprint planning and design reviews.", "suggested": "Led cross-functional design reviews with engineering and product, catching [N] usability issues before release.", "why": "Stronger verb plus the 'cross-functional' keyword."},
+        {"priority": "medium", "section": "Header", "issue": "No LinkedIn profile link.", "current": "Toronto, ON · demo@example.com · +1 416 555 0134 · portfolio.example.com", "suggested": "Toronto, ON · demo@example.com · +1 416 555 0134 · linkedin.com/in/[your-handle] · portfolio.example.com", "why": "Recruiters check LinkedIn first; ATS profiles often require it."},
+        {"priority": "low", "section": "Skills", "issue": "Missing common expected skills.", "current": "Figma, Sketch, Miro, prototyping, user research, usability testing, journey mapping", "suggested": "Figma, Sketch, Miro, prototyping, user research, usability testing, journey mapping, information architecture, accessibility (WCAG), A/B testing", "why": "Adds expected keywords — only list what you can back up."},
+    ],
+}
+
 DEMO_KIT = {
     "positioning_statement": "A product designer who makes teams faster by building the systems other designers ship on. Pitch yourself as the person who turns Acme's growing component sprawl into an accessible, token-driven design system.",
     "projected_score": 82,

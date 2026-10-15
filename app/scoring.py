@@ -18,6 +18,8 @@ from .models import (
     Requirement,
     RequirementResult,
     ResumeEvidence,
+    ResumeNarrative,
+    ResumeProfile,
 )
 
 WEIGHTS = {
@@ -185,7 +187,7 @@ class Scorecard:
     standing: str
     categories: List[CategoryScore]  # rationale left blank for Claude to fill
     requirements: List[RequirementResult]
-    coverage: Coverage
+    coverage: Optional[Coverage]
     matched_keywords: List[str]
     missing_keywords: List[str]
 
@@ -269,4 +271,116 @@ def assemble(card: Scorecard, narrative: Narrative, candidate_name: str, job_tit
         changes=narrative.changes,
         requirements=card.requirements,
         coverage=card.coverage,
+    )
+
+
+# ---- Resume-only mode (no job posting) ----
+
+RESUME_WEIGHTS = {
+    "ATS keyword coverage": 20,
+    "Impact & quantified results": 20,
+    "Action-oriented bullets": 15,
+    "Clarity & formatting": 15,
+    "Skills section": 10,
+    "Experience detail": 10,
+    "Contact & profile": 10,
+}
+WEAK_OPENERS = ("responsible for", "worked on", "helped", "assisted", "involved in", "participated in",
+                "tasked with", "duties included", "in charge of", "handled", "various")
+STRONG_VERBS = {
+    "achieved", "built", "created", "cut", "delivered", "designed", "developed", "drove", "grew", "improved",
+    "increased", "launched", "led", "managed", "mentored", "negotiated", "owned", "reduced", "ran", "shipped",
+    "spearheaded", "streamlined", "won", "architected", "automated", "coached", "directed", "established",
+    "expanded", "generated", "implemented", "introduced", "optimized", "orchestrated", "pioneered", "redesigned",
+    "scaled", "secured", "transformed", "boosted", "accelerated", "championed", "defined", "headed", "produced",
+}
+SKILLS_TARGET = 12  # a skills section naming ~12 concrete tools/skills earns full marks
+
+
+def _bullet_text(line: str) -> str:
+    return re.sub(r"^[-*•▪◦●‣–]\s*", "", line).strip()
+
+
+def _action_bullets(resume: str) -> tuple[int, str]:
+    lines = [_bullet_text(l) for l in _content_lines(resume)]
+    if not lines:
+        return 0, "No bullet-style lines found"
+    strong = weak = 0
+    for l in lines:
+        low = l.lower()
+        first = re.sub(r"[^a-z]", "", low.split()[0]) if low.split() else ""
+        if low.startswith(WEAK_OPENERS):
+            weak += 1
+        elif first in STRONG_VERBS or (first.endswith("ed") and len(first) > 4):
+            strong += 1
+    score = round(100 * strong / len(lines))
+    return score, f"{strong} of {len(lines)} lines open with a strong action verb" + (f", {weak} with weak phrasing" if weak else "")
+
+
+def _skills_section(resume_norm: str, profile: ResumeProfile) -> tuple[int, str]:
+    found = keyword_hits(profile.hard_skills, resume_norm)
+    score = min(100, round(100 * len(found) / SKILLS_TARGET))
+    return score, f"{len(found)} concrete skills/tools named (target {SKILLS_TARGET}+)"
+
+
+def _experience_detail(profile: ResumeProfile) -> tuple[int, str]:
+    if not profile.roles:
+        return 0, "No roles found"
+    dated = sum(bool(r.start.strip() and r.end.strip()) for r in profile.roles)
+    detailed = sum(r.bullets >= 3 for r in profile.roles)
+    score = round(100 * (dated + detailed) / (2 * len(profile.roles)))
+    return score, f"{dated} of {len(profile.roles)} roles dated, {detailed} with 3+ bullets"
+
+
+CONTACT_CHECKS = [
+    ("email", lambda r: re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", r)),
+    ("phone", lambda r: re.search(r"\+?\d[\d\s().-]{7,}\d", r)),
+    ("LinkedIn URL", lambda r: re.search(r"linkedin\.com/in/", r, re.I)),
+    ("summary section", lambda r: re.search(r"^\W*(summary|profile|about( me)?|professional summary)\b", r, re.I | re.M)),
+]
+
+
+def _contact(resume: str) -> tuple[int, str]:
+    failed = [name for name, check in CONTACT_CHECKS if not check(resume)]
+    score = round(100 * (len(CONTACT_CHECKS) - len(failed)) / len(CONTACT_CHECKS))
+    return score, ("Missing: " + ", ".join(failed)) if failed else "Email, phone, LinkedIn and summary all present"
+
+
+def compute_resume(resume: str, profile: ResumeProfile) -> Scorecard:
+    resume_norm = _norm(resume)
+    expected = list(dict.fromkeys(k for k in profile.expected_keywords if k.strip()))
+    hits = keyword_hits(expected, resume_norm)
+    kw_pct = round(100 * len(hits) / len(expected)) if expected else 0
+    parts = {
+        "ATS keyword coverage": (kw_pct, f"{len(hits)} of {len(expected)} keywords expected for {profile.target_role or 'this role'} found word-for-word"),
+        "Impact & quantified results": _impact(resume),
+        "Action-oriented bullets": _action_bullets(resume),
+        "Clarity & formatting": _clarity(resume),
+        "Skills section": _skills_section(resume_norm, profile),
+        "Experience detail": _experience_detail(profile),
+        "Contact & profile": _contact(resume),
+    }
+    categories = [CategoryScore(name=n, score=s, weight=RESUME_WEIGHTS[n], detail=d, rationale="") for n, (s, d) in parts.items()]
+    overall = round(sum(c.score * c.weight for c in categories) / 100)
+    missing = [k for k in expected if k not in hits]
+    return Scorecard(overall, standing_for(overall), categories, [], None, hits[:20], missing[:15])
+
+
+def assemble_resume(card: Scorecard, narrative: ResumeNarrative, profile: ResumeProfile) -> Analysis:
+    rationales = {r.name: r.rationale for r in narrative.rationales}
+    return Analysis(
+        candidate_name=profile.candidate_name,
+        job_title=profile.target_role,
+        company="",
+        overall_score=card.overall,
+        standing=card.standing,
+        verdict=narrative.verdict,
+        categories=[c.model_copy(update={"rationale": rationales.get(c.name, "")}) for c in card.categories],
+        matched_keywords=card.matched_keywords,
+        missing_keywords=card.missing_keywords,
+        strengths=narrative.strengths,
+        gaps=narrative.gaps,
+        red_flags=narrative.red_flags,
+        changes=narrative.changes,
+        mode="resume",
     )

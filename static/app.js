@@ -52,36 +52,118 @@ function needAccessCode() {
   $("#access_code").focus();
 }
 
+function apiError(body) {
+  const d = body.detail;
+  const err = new Error(typeof d === "string" ? d : d?.message || "Something went wrong.");
+  err.code = d?.code;
+  return err;
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { ...(opts.headers || {}), ...accessHeaders() } });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const d = body.detail;
-    const err = new Error(typeof d === "string" ? d : d?.message || "Something went wrong.");
-    err.code = d?.code;
-    throw err;
-  }
+  if (!res.ok) throw apiError(body);
   return body;
 }
 
-let loadingTimer;
-function loading(on, messages = []) {
-  $("#loading").hidden = !on;
-  clearInterval(loadingTimer);
-  if (on && messages.length) {
-    let i = 0;
-    $("#loading-text").textContent = messages[0];
-    loadingTimer = setInterval(() => { i = Math.min(i + 1, messages.length - 1); $("#loading-text").textContent = messages[i]; }, 6000);
-  }
+// multipart POST with real upload progress (fetch can't report it)
+function postForm(path, fd, onUpload) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", path);
+    Object.entries(accessHeaders()).forEach(([k, v]) => x.setRequestHeader(k, v));
+    x.upload.onprogress = (e) => e.lengthComputable && onUpload(e.loaded / e.total);
+    x.upload.onload = () => onUpload(1);
+    x.onload = () => {
+      let body = {};
+      try { body = JSON.parse(x.responseText); } catch {}
+      x.status >= 200 && x.status < 300 ? resolve(body) : reject(apiError(body));
+    };
+    x.onerror = () => reject(new Error("Network error — check your connection and try again."));
+    x.send(fd);
+  });
 }
+
+// Staged loader: real upload progress first, then timed stages that never claim to finish before the server does.
+const loader = {
+  start(stages, expectedSec, { upload = false } = {}) {
+    clearInterval(this.timer);
+    Object.assign(this, { stages, expected: expectedSec * 1000, i: 0, pct: 0, t0: Date.now(), tProc: upload ? null : Date.now(), upload });
+    const el = $("#loading");
+    el.hidden = false;
+    el.classList.toggle("uploading", upload);
+    el.classList.toggle("processing", !upload);
+    $("#stages").innerHTML = stages.map((s) => `<li>${esc(s)}</li>`).join("");
+    this.paint();
+    this.timer = setInterval(() => this.tick(), 200);
+  },
+  setUpload(frac) {
+    if (!this.upload || this.tProc) return;
+    this.pct = Math.max(this.pct, frac * 12);
+    if (frac >= 1) {
+      this.tProc = Date.now();
+      $("#loading").classList.replace("uploading", "processing");
+      this.next();
+    }
+    this.paint();
+  },
+  tick() {
+    if (this.tProc) {
+      const t = Date.now() - this.tProc;
+      const base = this.upload ? 12 : 0;
+      this.pct = Math.max(this.pct, base + (95 - base) * (1 - Math.exp(-t / (this.expected / 2))));
+      // advance through the middle stages on a schedule, holding on the last one until the response arrives
+      const want = Math.min(this.stages.length - 1, (this.upload ? 1 : 0) + Math.floor(t / (this.expected / this.stages.length)));
+      while (this.i < want) this.next();
+    }
+    this.paint();
+  },
+  next() { if (this.i < this.stages.length - 1) this.i++; this.paint(); },
+  paint() {
+    $$("#stages li").forEach((li, k) => {
+      li.classList.toggle("done", k < this.i);
+      li.classList.toggle("active", k === this.i);
+    });
+    $("#loading-text").textContent = this.stages[this.i] + "…";
+    $("#progress-fill").style.width = this.pct.toFixed(1) + "%";
+    $("#progress-label").textContent = Math.floor(this.pct) + "%";
+    const sec = Math.floor((Date.now() - this.t0) / 1000);
+    $("#progress-elapsed").textContent = sec >= 3 ? `${sec}s` : "";
+  },
+  async finish() {
+    clearInterval(this.timer);
+    this.i = this.stages.length;
+    this.pct = 100;
+    this.paint();
+    $("#loading-text").textContent = "Done";
+    await new Promise((r) => setTimeout(r, 450));
+    this.stop();
+  },
+  stop() { clearInterval(this.timer); $("#loading").hidden = true; },
+};
 
 // ---- Upload ----
 const drop = $("#drop"), fileInput = $("#resume");
 function setFile(f) {
   if (!f) return;
   const dt = new DataTransfer(); dt.items.add(f); fileInput.files = dt.files;
-  drop.classList.add("has-file");
-  $("#drop-text").innerHTML = `<strong>${esc(f.name)}</strong><br><small>${(f.size / 1024).toFixed(0)} KB · click to change</small>`;
+  drop.classList.remove("has-file");
+  $("#drop-icon").textContent = "⬆";
+  $("#drop-text").innerHTML = `<strong>${esc(f.name)}</strong><br><small>Loading ${(f.size / 1024).toFixed(0)} KB…</small>`;
+  const bar = $("#file-progress"), fill = bar.firstElementChild;
+  bar.hidden = false; fill.style.width = "0%";
+  const t0 = Date.now(), reader = new FileReader();
+  reader.onprogress = (e) => e.lengthComputable && (fill.style.width = (85 * e.loaded / e.total).toFixed(0) + "%");
+  reader.onloadend = () => setTimeout(() => {
+    fill.style.width = "100%";
+    setTimeout(() => {
+      bar.hidden = true;
+      drop.classList.add("has-file");
+      $("#drop-icon").textContent = "✓";
+      $("#drop-text").innerHTML = `<strong>${esc(f.name)}</strong><br><small>${(f.size / 1024).toFixed(0)} KB · ready · click to change</small>`;
+    }, 250);
+  }, Math.max(0, 500 - (Date.now() - t0)));  // keep it visible long enough to read
+  reader.readAsArrayBuffer(f);
 }
 fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
 ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
@@ -93,7 +175,7 @@ $("#analyze-form").addEventListener("submit", async (e) => {
   showError("");
   const url = $("#job_url").value.trim(), text = $("#job_text").value.trim();
   if (!fileInput.files[0]) return showError("Add your resume first.");
-  if (!url && !text) return showError("Add a job link or paste the job description.");
+  const withJob = !!(url || text);
 
   const fd = new FormData();
   fd.append("resume", fileInput.files[0]);
@@ -102,9 +184,16 @@ $("#analyze-form").addEventListener("submit", async (e) => {
 
   $("#analyze-btn").disabled = true;
   $("#results").hidden = $("#kit").hidden = true;
-  loading(true, ["Reading the job posting…", "Comparing your resume to the requirements…", "Checking each requirement…", "Writing your edits…"]);
+  $("#input-card").after($("#loading"));
+  const stages = withJob
+    ? ["Uploading your resume", "Reading your resume", ...(url && !text ? ["Fetching the job posting"] : []), "Matching each requirement", "Calculating your score", "Writing your edits"]
+    : ["Uploading your resume", "Reading your resume", "Spotting skills & keywords", "Calculating your score", "Writing your edits"];
+  loader.start(stages, withJob ? 50 : 45, { upload: true });
+  let ok = false;
   try {
-    const data = await api("/api/analyze", { method: "POST", body: fd });
+    const data = await postForm("/api/analyze", fd, (f) => loader.setUpload(f));
+    await loader.finish();
+    ok = true;
     store.set("hireready_access_code", $("#access_code").value.trim());
     state.resumeText = data.resume_text; state.job = data.job; state.analysis = data.analysis; state.kit = null;
     renderAnalysis();
@@ -113,7 +202,7 @@ $("#analyze-form").addEventListener("submit", async (e) => {
     if (err.code === "access_code") needAccessCode();
     if (err.code === "job_fetch_failed") { $("#paste-box").open = true; $("#job_text").focus(); }
   } finally {
-    loading(false);
+    if (!ok) loader.stop();
     $("#analyze-btn").disabled = false;
   }
 });
@@ -136,8 +225,21 @@ function renderAnalysis() {
   let n = 0;
   const tick = setInterval(() => { n = Math.min(score, n + 2); $("#score-num").textContent = n; if (n >= score) clearInterval(tick); }, 16);
 
+  const resumeOnly = a.mode === "resume";
   const title = a.job_title || job.title, company = a.company || job.company;
-  $("#job-line").textContent = [title, company].filter(Boolean).join(" · ");
+  $("#job-line").textContent = resumeOnly
+    ? `General resume score${title ? " · best fit: " + title : ""}`
+    : [title, company].filter(Boolean).join(" · ");
+  $("#breakdown-note").textContent = resumeOnly
+    ? "Calculated from your resume alone — the same resume always gets the same score. Add a job link for a match score."
+    : "Calculated from the requirement check below — the same resume and job always get the same score.";
+  $("#kw-have-title").textContent = resumeOnly ? `Expected for ${title || "this role"} — you have` : "In your resume";
+  $("#kw-miss-title").textContent = resumeOnly ? "Expected — missing" : "Missing from your resume";
+  $("#cta-title").textContent = resumeOnly ? "Applying for a specific job?" : "Ready to apply?";
+  $("#cta-text").textContent = resumeOnly
+    ? "Add the LinkedIn job link to see how you match that role and get a tailored resume, cover letter and outreach."
+    : "Get a tailored resume, cover letter, recruiter outreach and interview prep for this exact role.";
+  $("#kit-btn").textContent = resumeOnly ? "Add a job link" : "Build my application kit";
   const src = $("#job-source"), sources = job.sources || [];
   src.hidden = !sources.length;
   src.textContent = sources.length ? "Job details from " + sources.join(" + ") : "";
@@ -221,22 +323,30 @@ function renderRequirements(a) {
 
 // ---- Kit ----
 $("#kit-btn").addEventListener("click", async () => {
+  if (state.analysis?.mode === "resume") {
+    $("#input-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => $("#job_url").focus({ preventScroll: true }), 400);
+    return;
+  }
   $("#kit-btn").disabled = true;
   $("#kit").hidden = true;
   $("#results").after($("#loading"));
-  loading(true, ["Rewriting your resume for this role…", "Drafting your cover letter…", "Writing recruiter outreach…", "Preparing interview talking points…", "Almost there…"]);
+  loader.start(["Rewriting your resume for this role", "Drafting your cover letter", "Writing recruiter outreach", "Preparing interview talking points"], 30);
+  let ok = false;
   try {
     const data = await api("/api/apply-kit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resume_text: state.resumeText, job: state.job, analysis: state.analysis }),
     });
+    await loader.finish();
+    ok = true;
     state.kit = data.kit;
     renderKit();
   } catch (err) {
     toast(err.message);
   } finally {
-    loading(false);
+    if (!ok) loader.stop();
     $("#kit-btn").disabled = false;
   }
 });
@@ -307,6 +417,21 @@ $("#dl-docx").addEventListener("click", async () => {
 });
 
 // ---- Status ----
+// ---- Splash: play the intro once per visit (short on reloads), then fade out ----
+(() => {
+  const splash = $("#splash");
+  let seen = false;
+  try { seen = sessionStorage.getItem("hr_splash") === "1"; sessionStorage.setItem("hr_splash", "1"); } catch {}
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const minMs = reduce ? 200 : seen ? 700 : 1700;
+  const t0 = performance.now();
+  const hide = () => setTimeout(() => {
+    splash.classList.add("out");
+    setTimeout(() => splash.remove(), 500);
+  }, Math.max(0, minMs - (performance.now() - t0)));
+  document.readyState === "complete" ? hide() : addEventListener("load", hide, { once: true });
+})();
+
 $("#access_code").value = store.get("hireready_access_code");
 api("/api/status").then((s) => {
   $("#demo-pill").hidden = !s.demo;

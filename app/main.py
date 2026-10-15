@@ -74,20 +74,21 @@ async def analyze(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    if not (job_text.strip() or job_url.strip()):
-        raise HTTPException(400, "Add a job link or paste the job description.")
     await enforce_limit(request, "analyze")
 
+    # No job given: score the resume on its own. With a job: the full match process.
     if job_text.strip():
         job = Job(url=job_url.strip(), description=job_text.strip())
-    else:
+    elif job_url.strip():
         try:
             job = await fetch_job(job_url)
         except JobFetchError as e:
             raise HTTPException(422, {"code": "job_fetch_failed", "message": str(e)})
+    else:
+        job = Job(description="")
 
     try:
-        analysis = await ai.analyze(resume_text, job)
+        analysis = await (ai.analyze(resume_text, job) if job.description else ai.analyze_resume(resume_text))
     except ai.AIError as e:
         raise HTTPException(502, str(e))
     await cache.save_analysis({
@@ -114,6 +115,8 @@ class KitRequest(BaseModel):
 
 @app.post("/api/apply-kit", dependencies=[Depends(require_access)])
 async def apply_kit(req: KitRequest, request: Request):
+    if not req.job.description:
+        raise HTTPException(400, "Add a job link first — the application kit is tailored to a specific job.")
     await enforce_limit(request, "kit")
     try:
         kit = await ai.build_kit(req.resume_text, req.job, req.analysis)

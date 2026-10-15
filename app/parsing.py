@@ -11,7 +11,7 @@ from docx import Document
 from pypdf import PdfReader
 
 from . import cache
-from .models import Job
+from .models import Job, LinkedInProfile, ProfileExperience
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -396,3 +396,78 @@ def _parse_generic(html: str, url: str) -> Job:
     if len(text) < 300:
         raise JobFetchError("That page didn't contain a readable job description. Paste it instead.")
     return Job(url=url, title=title, description=text[:20000])
+
+
+# ---- LinkedIn profiles (Apify) ----
+
+APIFY_PROFILE_ACTOR = os.getenv("APIFY_PROFILE_ACTOR", "harvestapi~linkedin-profile-scraper")
+
+
+def linkedin_profile_id(url: str) -> str | None:
+    m = re.search(r"linkedin\.com/in/([^/?#]+)", url)
+    return m.group(1).lower() if m else None
+
+
+async def fetch_linkedin_profile(url: str) -> LinkedInProfile:
+    pid = linkedin_profile_id(url.strip())
+    if not pid:
+        raise JobFetchError("Use your profile link, like https://www.linkedin.com/in/your-name/")
+    cached = await cache.get("li-profiles", pid, LinkedInProfile, max_age_s=POSTING_TTL_S)
+    if cached:
+        return cached
+    if not os.getenv("APIFY_API_TOKEN"):
+        raise JobFetchError("Profile links aren't available right now. Upload your LinkedIn PDF instead (Profile → More → Save to PDF).")
+    unavailable = JobFetchError("Couldn't read that LinkedIn profile. Check the link is public, or upload your LinkedIn PDF instead.")
+    async with httpx.AsyncClient(timeout=150) as http:
+        try:
+            resp = await http.post(
+                f"{APIFY_API}/acts/{APIFY_PROFILE_ACTOR}/run-sync-get-dataset-items",
+                params={"timeout": 120},
+                headers={"Authorization": f"Bearer {os.environ['APIFY_API_TOKEN']}"},
+                json={"urls": [f"https://www.linkedin.com/in/{pid}/"]},
+            )
+            records = resp.json() if resp.status_code in (200, 201) else []
+        except (httpx.HTTPError, ValueError):
+            raise unavailable
+    rec = next((r for r in (records if isinstance(records, list) else [records]) if isinstance(r, dict) and r.get("headline") is not None), None)
+    if not rec:
+        raise unavailable
+    profile = _profile_from_apify(rec, pid)
+    await cache.put("li-profiles", pid, profile)
+    return profile
+
+
+def _date_text(d) -> str:
+    return (d or {}).get("text", "") if isinstance(d, dict) else str(d or "")
+
+
+def _profile_from_apify(rec: dict, pid: str) -> LinkedInProfile:
+    totals = rec.get("sectionTotals") or {}
+    featured = rec.get("featured") or {}
+    return LinkedInProfile(
+        name=" ".join(x for x in [rec.get("firstName"), rec.get("lastName")] if x),
+        headline=rec.get("headline") or "",
+        about=rec.get("about") or "",
+        location=((rec.get("location") or {}).get("linkedinText") or ""),
+        experiences=[
+            ProfileExperience(
+                title=e.get("position") or "",
+                company=e.get("companyName") or "",
+                description=e.get("description") or "",
+                start=_date_text(e.get("startDate")),
+                end=_date_text(e.get("endDate")) or ("Present" if e.get("startDate") else ""),
+            )
+            for e in rec.get("experience") or []
+        ],
+        skills=[s.get("name", "") for s in rec.get("skills") or [] if isinstance(s, dict)] + list(rec.get("topSkills") or []),
+        skills_total=totals.get("skills", len(rec.get("skills") or [])),
+        certifications=totals.get("certifications", len(rec.get("certifications") or [])),
+        recommendations=totals.get("receivedRecommendations", len(rec.get("receivedRecommendations") or [])),
+        education=totals.get("education", len(rec.get("education") or [])),
+        connections=rec.get("connectionsCount"),
+        has_photo=bool(rec.get("photo") or (rec.get("profilePicture") or {}).get("url")),
+        has_banner=bool((rec.get("coverPicture") or {}).get("url")),
+        has_featured=bool(featured.get("slides") or featured.get("images") or featured.get("link")),
+        custom_url=not re.search(r"-[0-9a-f]{6,}$|\d{5,}$", pid),  # default URLs end in a random suffix
+        source="LinkedIn (via Apify)",
+    )

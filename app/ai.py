@@ -24,6 +24,9 @@ from .models import (
     JobRequirements,
     Narrative,
     ChatMessage,
+    LinkedInProfile,
+    ProfileFromPdf,
+    ProfileNarrative,
     ResumeEdit,
     ResumeEvidence,
     ResumeNarrative,
@@ -167,6 +170,26 @@ resume unchanged, and ask for what you need in `reply`.
 - reply: 1-3 friendly sentences on what you did (or what you need). changes: one short line per content edit \
 (don't mention the Markdown conversion).
 - Use the analysis and job (when given) to make suggestions specific, e.g. "apply the high-priority changes"."""
+
+PROFILE_PDF_INSTRUCTIONS = """This is a LinkedIn profile exported with "Save to PDF". Extract it exactly as written.
+- headline: the line under the name. about: the full Summary/About text ("" if none).
+- experiences: every position, most recent first, with its full description ("" if none).
+- top_skills: the "Top Skills" list. certifications / education: how many entries each section has.
+- profile_url: the linkedin.com/in/... URL from the contact section ("" if none)."""
+
+PROFILE_NARRATIVE_INSTRUCTIONS = """Review this LinkedIn profile for someone targeting <target_role>. The scorecard above was \
+computed by code from the profile; the scores are final — explain them, don't re-score.
+
+- rationales: one per category in the scorecard (skip ones with weight 0), 1-2 sentences naming specific parts \
+of the profile.
+- verdict: one or two plain sentences on how findable and convincing this profile is to recruiters searching for \
+<target_role>.
+- strengths / gaps: 3-5 each, concrete. red_flags: things that put recruiters off (empty headline, gaps, \
+mismatched titles, "open to work" mixed signals). Empty list if none.
+- changes: 6-10 edits, highest impact first. Include a rewritten headline (under 220 characters) and an About \
+opening (first 2-3 lines) as `suggested` text. `section` is the profile section (Headline, About, Experience — \
+<company>, Skills, Featured...). `current` quotes the profile.
+- Truthfulness: use only facts on the profile. Where a metric would help, use a [placeholder]."""
 
 KIT_INSTRUCTIONS = """The candidate has the analysis above. Build their application kit so they stand out \
 as a top candidate for this specific role.
@@ -443,6 +466,44 @@ async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage],
     if new_figures:
         edit.changes.append("Please verify — these figures aren't in your original resume: " + ", ".join(new_figures[:8]))
     return edit
+
+
+async def profile_from_pdf_text(text: str) -> LinkedInProfile:
+    key = _key("li-pdf", text)
+    cached = await cache.get("li-profiles", key, LinkedInProfile)
+    if cached:
+        return cached
+    if demo_mode():
+        raise AIError("Reading a LinkedIn PDF needs an AI model, and HireReady isn't connected to one right now.")
+    pdf = await _parse(f"<linkedin_pdf>\n{text}\n</linkedin_pdf>\n\n{PROFILE_PDF_INSTRUCTIONS}", ProfileFromPdf, effort="low")
+    slug = re.search(r"linkedin\.com/in/([^/\s?#]+)", pdf.profile_url or text)
+    profile = LinkedInProfile(
+        name=pdf.name, headline=pdf.headline, about=pdf.about, location=pdf.location,
+        experiences=pdf.experiences, skills=pdf.top_skills,
+        skills_total=None, certifications=pdf.certifications, recommendations=None, education=pdf.education,
+        connections=None, has_photo=None, has_banner=None, has_featured=None,
+        custom_url=(not re.search(r"-[0-9a-f]{6,}$|\d{5,}$", slug.group(1))) if slug else None,
+        source="LinkedIn PDF export",
+    )
+    await cache.put("li-profiles", key, profile)
+    return profile
+
+
+async def analyze_profile(profile: LinkedInProfile, target_role: str) -> Analysis:
+    """Same split as the resume: code scores the profile's facts, the model explains and suggests rewrites."""
+    role = target_role.strip() or (profile.experiences[0].title if profile.experiences else "") or profile.headline[:60]
+    seniority = "mid"
+    expected = [] if demo_mode() else await role_keywords(role, seniority)
+    card = scoring.compute_profile(profile, role, expected)
+    if demo_mode():
+        raise AIError("Profile reviews need an AI model, and HireReady isn't connected to one right now.")
+    brief = profile.model_dump(exclude={"source"})
+    content = (
+        f"<target_role>{role}</target_role>\n\n<linkedin_profile>\n{json.dumps(brief, indent=1)}\n</linkedin_profile>\n\n"
+        f"{_scorecard_block(card)}\n\n{PROFILE_NARRATIVE_INSTRUCTIONS}"
+    )
+    narrative = await _parse(content, ProfileNarrative, effort="medium")
+    return scoring.assemble_profile(card, narrative, profile, role)
 
 
 async def build_kit(resume: str, job: Job, analysis: Analysis) -> ApplyKit:

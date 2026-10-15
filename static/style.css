@@ -83,8 +83,8 @@ small { color: var(--muted); }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
 .drop.has-file { border-style: solid; border-color: var(--good); background: var(--good-soft); }
 .drop-icon { width: 44px; height: 44px; border-radius: 10px; background: var(--surface-2); display: grid; place-items: center; font-size: 18px; flex: none; }
-input[type=url], input[type=password], textarea { width: 100%; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
-input[type=url]:focus, input[type=password]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+input[type=url], input[type=password], input[type=text], textarea { width: 100%; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
+input[type=url]:focus, input[type=password]:focus, input[type=text]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .hint { display: block; margin-bottom: 16px; }
 details { margin-bottom: 18px; }
 summary { cursor: pointer; color: var(--accent); font-weight: 500; font-size: 14px; margin-bottom: 10px; }
@@ -345,3 +345,9 @@ textarea { resize: vertical; }
 .chip.lock-chip { background: var(--surface-2); color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
 .chip.lock-chip svg { width: 12px; height: 12px; }
 .list li.locked-li { list-style: none; margin-left: -18px; }
+
+/* ---- Mode tabs (resume / LinkedIn) ---- */
+.mode-tabs { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border-radius: 12px; margin-bottom: 20px; }
+.mode-tab { flex: 1; font: inherit; font-weight: 600; font-size: 14px; padding: 10px 12px; border: 0; border-radius: 9px; background: none; color: var(--muted); cursor: pointer; transition: background .2s, color .2s, box-shadow .2s; }
+.mode-tab.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow), 0 0 0 1px var(--border); }
+#linkedin-fields input[type=file] { font: inherit; font-size: 13px; margin-bottom: 4px; }

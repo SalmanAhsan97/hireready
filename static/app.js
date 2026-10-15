@@ -185,9 +185,52 @@ fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
 ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
 drop.addEventListener("drop", (e) => setFile(e.dataTransfer.files[0]));
 
+let formMode = "resume";
+function setFormMode(mode) {
+  formMode = mode;
+  $$(".mode-tab").forEach((t) => t.classList.toggle("active", t.dataset.mode === mode));
+  $("#resume-fields").hidden = mode !== "resume";
+  $("#linkedin-fields").hidden = mode !== "linkedin";
+  $("#analyze-btn").textContent = mode === "resume" ? "Score my resume" : "Review my profile";
+  showError("");
+}
+$$(".mode-tab").forEach((t) => t.addEventListener("click", () => setFormMode(t.dataset.mode)));
+
+async function submitLinkedIn() {
+  const url = $("#profile_url").value.trim(), pdf = $("#profile_pdf").files[0];
+  if (!url && !pdf) return showError("Add your LinkedIn profile link, or upload your LinkedIn PDF.");
+  const fd = new FormData();
+  fd.append("profile_url", url);
+  fd.append("target_role", $("#target_role").value.trim());
+  if (pdf) fd.append("profile_pdf", pdf);
+  $("#analyze-btn").disabled = true;
+  $("#results").hidden = $("#kit").hidden = true;
+  $("#input-card").after($("#loading"));
+  const stages = [...(pdf ? ["Uploading your LinkedIn PDF"] : []), "Reading your LinkedIn profile", "Checking what recruiters search for", "Scoring your profile", "Writing your rewrites"];
+  loader.start(stages, 45, { upload: !!pdf });
+  let ok = false;
+  try {
+    const data = await postForm("/api/linkedin", fd, (f) => loader.setUpload(f));
+    await loader.finish();
+    ok = true;
+    store.set("hireready_access_code", $("#access_code").value.trim());
+    Object.assign(state, { demo: data.demo, preview: !!data.preview, locked: data.locked, resumeText: "", kit: null,
+      job: { url: data.profile.url, description: "", title: "", company: "" }, analysis: data.analysis });
+    renderAnalysis();
+  } catch (err) {
+    showError(err.message);
+    if (err.code === "access_code") needAccessCode();
+    if (err.code === "profile_fetch_failed") { $("#li-pdf-box").open = true; }
+  } finally {
+    if (!ok) loader.stop();
+    $("#analyze-btn").disabled = false;
+  }
+}
+
 $("#analyze-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   showError("");
+  if (formMode === "linkedin") return submitLinkedIn();
   const url = $("#job_url").value.trim(), text = $("#job_text").value.trim();
   if (!fileInput.files[0]) return showError("Add your resume first.");
   const withJob = !!(url || text);
@@ -244,7 +287,7 @@ function renderAnalysis() {
   const tick = setInterval(() => { n = Math.min(score, n + 2); $("#score-num").textContent = n; if (n >= score) clearInterval(tick); }, 16);
 
   $("#demo-banner").hidden = !state.demo;
-  const resumeOnly = a.mode === "resume";
+  const resumeOnly = a.mode === "resume", profileMode = a.mode === "linkedin";
   const title = a.job_title || job.title, company = a.company || job.company;
   $("#job-line").textContent = resumeOnly
     ? `General resume score${title ? " · best fit: " + title : ""}`
@@ -259,6 +302,16 @@ function renderAnalysis() {
     ? "Add the LinkedIn job link to see how you match that role and get a tailored resume, cover letter and outreach."
     : "Get a tailored resume, cover letter, recruiter outreach and interview prep for this exact role.";
   $("#kit-btn").textContent = resumeOnly ? "Add a job link" : "Build my application kit";
+  if (profileMode) {
+    $("#job-line").textContent = `LinkedIn profile · evaluated for ${title || "your field"}`;
+    $("#breakdown-note").textContent = "Calculated in code from your profile — the same profile and title always get the same score.";
+    $("#kw-have-title").textContent = `Recruiters search for ${title || "this role"} — on your profile`;
+    $("#kw-miss-title").textContent = "Missing from your profile";
+    $("#cta-title").textContent = "Score your resume too";
+    $("#cta-text").textContent = "Upload your resume to see how it scores, and add a job link to check your match for a specific role.";
+    $("#kit-btn").textContent = "Score my resume";
+  }
+  $("#chat-card").hidden = profileMode;
   const src = $("#job-source"), sources = job.sources || [];
   src.hidden = !sources.length;
   src.textContent = sources.length ? "Job details from " + sources.join(" + ") : "";
@@ -271,6 +324,7 @@ function renderAnalysis() {
   cap.textContent = capReason ? `${capReason} (would be ${a.coverage.uncapped_score} otherwise).` : "";
   const link = $("#job-link");
   link.hidden = !job.url; link.href = job.url || "#";
+  link.textContent = a.mode === "linkedin" ? "View profile ↗" : "View job posting ↗";
 
   $("#categories").innerHTML = a.categories.map((c) => `
     <div class="cat">
@@ -456,6 +510,11 @@ $("#chat-docx").addEventListener("click", () => downloadDocx(state.chat.md || st
 // ---- Kit ----
 $("#kit-btn").addEventListener("click", async () => {
   if (state.preview) { location.href = mailto(); return; }
+  if (state.analysis?.mode === "linkedin") {
+    setFormMode("resume");
+    $("#input-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   if (state.analysis?.mode === "resume") {
     $("#input-card").scrollIntoView({ behavior: "smooth", block: "start" });
     setTimeout(() => $("#job_url").focus({ preventScroll: true }), 400);

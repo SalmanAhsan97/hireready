@@ -11,13 +11,13 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from docx import Document  # noqa: E402
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ai, cache
 from .models import Analysis, ChatMessage, Job
-from .parsing import JobFetchError, extract_resume_text, fetch_job, linkedin_sources
+from .parsing import JobFetchError, extract_resume_text, fetch_job, fetch_linkedin_profile, linkedin_sources
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_UPLOAD = 5 * 1024 * 1024
@@ -153,6 +153,58 @@ async def analyze(
     return {"resume_text": resume_text, "job": job, "analysis": analysis, "demo": ai.demo_mode(), "preview": not full, "locked": locked}
 
 
+@app.post("/api/linkedin")
+async def linkedin_review(
+    request: Request,
+    profile_url: str = Form(""),
+    target_role: str = Form(""),
+    profile_pdf: UploadFile | None = File(None),
+):
+    """Evaluate a LinkedIn profile against a target title: from the profile link (scraped) or the
+    'Save to PDF' export (free)."""
+    full = has_full_access(request)
+    if not full and request.headers.get("x-access-code", "").strip():
+        raise HTTPException(401, {"code": "access_code", "message": "That access code isn't valid. Clear it for a free preview."})
+    if not profile_url.strip() and not profile_pdf:
+        raise HTTPException(400, "Add your LinkedIn profile link or upload your LinkedIn PDF.")
+    await enforce_limit(request, "analyze" if full else "preview")
+    try:
+        if profile_pdf and profile_pdf.filename:
+            data = await profile_pdf.read()
+            if len(data) > MAX_UPLOAD:
+                raise HTTPException(413, "That PDF is over 5 MB.")
+            try:
+                text = extract_resume_text(profile_pdf.filename, data)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            profile = await ai.profile_from_pdf_text(text)
+        else:
+            profile = await fetch_linkedin_profile(profile_url)
+        analysis = await ai.analyze_profile(profile, target_role)
+    except JobFetchError as e:
+        raise HTTPException(422, {"code": "profile_fetch_failed", "message": str(e)})
+    except ai.AIError as e:
+        raise HTTPException(502, str(e))
+    await cache.save_analysis({
+        "job_url": profile_url.strip(),
+        "job_title": analysis.job_title,
+        "company": "",
+        "candidate_name": analysis.candidate_name,
+        "overall_score": analysis.overall_score,
+        "standing": analysis.standing,
+        "must_pct": None,
+        "resume_sha256": hashlib.sha256(profile.model_dump_json().encode()).hexdigest(),
+        "demo": ai.demo_mode(),
+        "job": {"source": profile.source},
+        "analysis": analysis.model_dump(mode="json"),
+    })
+    locked = None
+    if not full:
+        analysis, locked = preview_of(analysis)
+    return {"profile": {"source": profile.source, "url": profile_url.strip()}, "analysis": analysis,
+            "demo": ai.demo_mode(), "preview": not full, "locked": locked}
+
+
 class KitRequest(BaseModel):
     resume_text: str
     job: Job
@@ -229,9 +281,17 @@ def export_docx(req: DocxRequest):
     )
 
 
+def _asset_version(name: str) -> str:
+    return hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:10]
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    # Version the CSS/JS links by content so a deploy never leaves visitors on stale cached files.
+    html = (STATIC / "index.html").read_text()
+    for name in ("app.js", "style.css"):
+        html = html.replace(f"/static/{name}", f"/static/{name}?v={_asset_version(name)}")
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

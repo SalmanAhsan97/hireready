@@ -18,6 +18,8 @@ from .models import (
     Requirement,
     RequirementResult,
     ResumeEvidence,
+    LinkedInProfile,
+    ProfileNarrative,
     ResumeNarrative,
     ResumeProfile,
 )
@@ -445,4 +447,114 @@ def assemble_resume(card: Scorecard, narrative: ResumeNarrative, profile: Resume
         red_flags=narrative.red_flags,
         changes=narrative.changes,
         mode="resume",
+    )
+
+
+# ---- LinkedIn profile evaluation ----
+# Checks follow LinkedIn's own profile guidance and common recruiter-search practice: a keyword-rich
+# headline, a substantial About, described roles with results, many listed skills, social proof.
+
+PROFILE_WEIGHTS = {
+    "Headline": 20,
+    "About section": 15,
+    "Keyword coverage": 20,
+    "Experience descriptions": 20,
+    "Skills": 10,
+    "Credibility": 10,
+    "Profile completeness": 5,
+}
+
+
+def _has_number(text: str) -> bool:
+    return bool(re.search(r"\d", re.sub(r"\b(19|20)\d{2}\b", "", text)))
+
+
+def compute_profile(profile: LinkedInProfile, target_role: str, expected: list) -> Scorecard:
+    role_norm, head_norm = _norm(target_role), _norm(profile.headline)
+    all_text = _norm(" ".join([profile.headline, profile.about, *(f"{e.title} {e.description}" for e in profile.experiences), *profile.skills]))
+    terms = [k for k in expected if k.term.strip()]
+    hits = [k.term for k in terms if keyword_hits([k.term, *k.aliases], all_text)]
+    head_hits = [k.term for k in terms if keyword_hits([k.term, *k.aliases], head_norm)]
+    parts: dict[str, tuple[int | None, str]] = {}
+
+    role_words = [w for w in role_norm.split() if len(w) > 2]
+    has_role = bool(role_words) and all(w in head_norm.split() for w in role_words)
+    length_ok = 50 <= len(profile.headline) <= 220
+    parts["Headline"] = (
+        (40 if has_role else 0) + round(40 * min(1, len(head_hits) / 2)) + (20 if length_ok else 0),
+        f"{'Names' if has_role else 'Does not name'} {target_role}; {len(head_hits)} target keywords; {len(profile.headline)} characters (50-220 is ideal)",
+    )
+
+    words = len(profile.about.split())
+    about_kw = [k.term for k in terms if keyword_hits([k.term, *k.aliases], _norm(profile.about))]
+    parts["About section"] = (
+        round(60 * min(1, words / 200)) + round(25 * min(1, len(about_kw) / 3)) + (15 if _has_number(profile.about) else 0),
+        f"{words} words (200+ is ideal); {len(about_kw)} target keywords; {'has' if _has_number(profile.about) else 'no'} measurable results",
+    )
+
+    kw_pct = round(100 * len(hits) / len(terms)) if terms else 0
+    parts["Keyword coverage"] = (kw_pct, f"{len(hits)} of {len(terms)} keywords recruiters search for {target_role} appear on your profile")
+
+    recent = profile.experiences[:3]
+    if recent:
+        described = sum(len(e.description.split()) >= 25 for e in recent)
+        quantified = sum(_has_number(e.description) for e in recent)
+        parts["Experience descriptions"] = (
+            round(60 * described / len(recent) + 40 * quantified / len(recent)),
+            f"{described} of {len(recent)} recent roles described (25+ words); {quantified} include numbers",
+        )
+    else:
+        parts["Experience descriptions"] = (0, "No roles listed")
+
+    if profile.skills_total is None:
+        parts["Skills"] = (None, "Skills count not in the PDF export — not counted")
+    else:
+        parts["Skills"] = (min(100, round(100 * profile.skills_total / 30)), f"{profile.skills_total} skills listed (30+ is ideal; LinkedIn allows 100)")
+
+    cred, notes = 0, []
+    if profile.recommendations is not None:
+        cred += round(40 * min(1, profile.recommendations / 3)); notes.append(f"{profile.recommendations} recommendations")
+    cred += 30 if profile.certifications else 0; notes.append(f"{profile.certifications} certifications")
+    cred += 30 if profile.education else 0; notes.append(f"{profile.education} education entries")
+    max_cred = 100 if profile.recommendations is not None else 60
+    parts["Credibility"] = (round(100 * cred / max_cred), ", ".join(notes))
+
+    checks = {
+        "photo": profile.has_photo, "banner": profile.has_banner, "Featured section": profile.has_featured,
+        "custom URL": profile.custom_url, "500+ connections": None if profile.connections is None else profile.connections >= 500,
+        "location": bool(profile.location),
+    }
+    known = {k: v for k, v in checks.items() if v is not None}
+    missing = [k for k, v in known.items() if not v]
+    parts["Profile completeness"] = (
+        round(100 * (len(known) - len(missing)) / len(known)) if known else None,
+        ("Missing: " + ", ".join(missing)) if missing else f"All {len(known)} checks pass",
+    )
+
+    categories = [
+        CategoryScore(name=n, score=0 if sc is None else sc, weight=0 if sc is None else PROFILE_WEIGHTS[n], detail=d, rationale="")
+        for n, (sc, d) in parts.items()
+    ]
+    counted = sum(c.weight for c in categories) or 1
+    overall = round(sum(c.score * c.weight for c in categories) / counted)
+    return Scorecard(overall, standing_for(overall), categories, [], None, hits[:20], [k.term for k in terms if k.term not in hits][:15])
+
+
+def assemble_profile(card: Scorecard, narrative: ProfileNarrative, profile: LinkedInProfile, target_role: str) -> Analysis:
+    rationales = {r.name: r.rationale for r in narrative.rationales}
+    return Analysis(
+        candidate_name=profile.name,
+        job_title=target_role,
+        company="",
+        overall_score=card.overall,
+        standing=card.standing,
+        verdict=narrative.verdict,
+        categories=[c.model_copy(update={"rationale": rationales.get(c.name, "")}) for c in card.categories],
+        matched_keywords=card.matched_keywords,
+        missing_keywords=card.missing_keywords,
+        strengths=narrative.strengths,
+        gaps=narrative.gaps,
+        red_flags=narrative.red_flags,
+        changes=narrative.changes,
+        mode="linkedin",
     )

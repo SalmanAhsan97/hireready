@@ -139,6 +139,75 @@ class ResumeNarrative(BaseModel):
     changes: List[Change]
 
 
+# ---- LinkedIn profile evaluation ----
+
+class ProfileExperience(BaseModel):
+    title: str
+    company: str
+    description: str  # "" if the role has no description
+    start: str
+    end: str
+
+
+class LinkedInProfile(BaseModel):
+    """Normalized from the Apify scrape or extracted from LinkedIn's 'Save to PDF' export.
+    None means "not available from this source", and those checks aren't counted."""
+    name: str
+    headline: str
+    about: str
+    location: str
+    experiences: List[ProfileExperience]
+    skills: List[str]
+    skills_total: Optional[int]
+    certifications: int
+    recommendations: Optional[int]
+    education: int
+    connections: Optional[int]
+    has_photo: Optional[bool]
+    has_banner: Optional[bool]
+    has_featured: Optional[bool]
+    custom_url: Optional[bool]
+    source: str = ""  # "LinkedIn (via Apify)" | "LinkedIn PDF export"
+
+
+class ProfileFromPdf(BaseModel):
+    """What can be read from LinkedIn's 'Save to PDF' export."""
+    name: str
+    headline: str
+    about: str
+    location: str
+    experiences: List[ProfileExperience]
+    top_skills: List[str]
+    certifications: int
+    education: int
+    profile_url: str
+
+
+ProfileCategoryName = Literal[
+    "Headline",
+    "About section",
+    "Keyword coverage",
+    "Experience descriptions",
+    "Skills",
+    "Credibility",
+    "Profile completeness",
+]
+
+
+class ProfileCategoryRationale(BaseModel):
+    name: ProfileCategoryName
+    rationale: str
+
+
+class ProfileNarrative(BaseModel):
+    verdict: str
+    rationales: List[ProfileCategoryRationale]
+    strengths: List[str]
+    gaps: List[str]
+    red_flags: List[str]
+    changes: List[Change]
+
+
 # ---- What the API returns ----
 
 class CategoryScore(BaseModel):
@@ -190,7 +259,7 @@ class Analysis(BaseModel):
     changes: List[Change]
     requirements: List[RequirementResult] = []
     coverage: Optional[Coverage] = None
-    mode: Literal["job", "resume"] = "job"  # "resume" = scored without a job posting
+    mode: Literal["job", "resume", "linkedin"] = "job"  # "resume" = no job posting; "linkedin" = profile review
 
 
 class ChatMessage(BaseModel):

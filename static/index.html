@@ -35,7 +35,7 @@
   <main class="wrap">
     <section class="hero">
       <h1>See how you stack up — then become the obvious hire.</h1>
-      <p>Upload your resume for an instant score and the exact edits to make. Add a LinkedIn job link to see how you match that role and get a ready-to-send application kit.</p>
+      <p>Upload your resume for an instant score and the exact edits to make. Add a LinkedIn job link to see how you match that role and get a ready-to-send application kit — or review your LinkedIn profile against the title you're targeting.</p>
       <ol class="steps">
         <li class="active" data-step="1"><span>1</span>Upload</li>
         <li data-step="2"><span>2</span>Score &amp; fix</li>
@@ -46,6 +46,12 @@
     <!-- Step 1 -->
     <section class="card" id="input-card">
       <form id="analyze-form">
+        <div class="mode-tabs" role="tablist">
+          <button type="button" class="mode-tab active" data-mode="resume" role="tab">Score my resume</button>
+          <button type="button" class="mode-tab" data-mode="linkedin" role="tab">Review my LinkedIn</button>
+        </div>
+
+        <div id="resume-fields">
         <label class="field-label">Your resume</label>
         <label class="drop" id="drop">
           <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt,.md" hidden>
@@ -64,6 +70,23 @@
           <summary>Or paste the job description</summary>
           <textarea id="job_text" name="job_text" rows="8" placeholder="Paste the full job description here…"></textarea>
         </details>
+        </div>
+
+        <div id="linkedin-fields" hidden>
+          <label class="field-label" for="profile_url">Your LinkedIn profile link</label>
+          <input type="url" id="profile_url" placeholder="https://www.linkedin.com/in/your-name/">
+          <small class="hint">Your profile must be public. Or skip the link and upload LinkedIn's PDF of your profile below.</small>
+
+          <label class="field-label" for="target_role">Title or field you're targeting <span class="optional">optional</span></label>
+          <input type="text" id="target_role" placeholder="e.g. Marketing Manager — leave empty to use your current title">
+          <small class="hint">We check your profile against what recruiters search for in this role.</small>
+
+          <details id="li-pdf-box">
+            <summary>Or upload your LinkedIn PDF</summary>
+            <input type="file" id="profile_pdf" accept=".pdf">
+            <small class="hint">On LinkedIn: open your profile → <strong>Resources</strong> (or <strong>More</strong>) → <strong>Save to PDF</strong>.</small>
+          </details>
+        </div>
 
         <div id="access-wrap" hidden>
           <label class="field-label" for="access_code">Access code <span class="optional">optional</span></label>

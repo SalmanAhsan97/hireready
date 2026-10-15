@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Iterable, List, Optional
 
+from .synonyms import variants
 from .models import (
     Analysis,
     CategoryScore,
@@ -77,6 +78,16 @@ def keyword_hits(keywords: Iterable[str], resume_norm: str) -> List[str]:
     return hits
 
 
+def alias_hits(keywords: Iterable[str], resume_norm: str) -> List[tuple[str, str]]:
+    """(keyword, name used) for keywords that appear only under another name, like ("Kubernetes", "k8s")."""
+    found = []
+    for kw in keywords:
+        alt = keyword_hits(variants(kw), resume_norm)
+        if alt and not keyword_hits([kw], resume_norm):
+            found.append((kw, alt[0]))
+    return found
+
+
 def quote_found(quote: str, resume_tokens: str, resume_vocab: set) -> bool:
     """True if Claude's quote actually appears in the resume (punctuation/spacing-insensitive)."""
     fragments = [f for f in re.split(r"\.\.\.|…", quote) if _tokens(f)]
@@ -131,6 +142,8 @@ HEADING_LINE = re.compile(r"^[A-Z][A-Z &/]{3,}$")
 
 def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_tokens: str, vocab: set, resume_text: str) -> RequirementResult:
     hits = keyword_hits(req.keywords, resume_norm)
+    # another name for the skill still shows it; ATS keyword coverage below stays literal
+    aliased = [] if hits else alias_hits(req.keywords, resume_norm)
     quote = (ev.quote if ev else "").strip()
     verified = bool(quote) and quote_found(quote, resume_tokens, vocab)
     claimed = ev.status if ev else "missing"
@@ -147,15 +160,19 @@ def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_t
         status = "met" if ratio >= 1 else "partial" if ratio >= 0.75 else "missing"
         note = f"{ev.years:g} years (asks for {req.min_years}+)"
     elif claimed == "met":
-        status = "met" if verified or hits else "partial"
+        status = "met" if verified or hits or aliased else "partial"
         if status == "partial":
             note = "Claimed, but no supporting text found in the resume"
     elif claimed == "partial":
-        status = "partial" if verified or hits else "missing"
+        status = "partial" if verified or hits or aliased else "missing"
     else:
-        status = "partial" if hits else "missing"
-        if hits:
+        status = "partial" if hits or aliased else "missing"
+        if hits or aliased:
             note = "Mentioned, but not shown in your experience"
+    if aliased and not note:
+        # exact-match ATS (Taleo, Workday's parser) search the posting's wording literally
+        kw, used = aliased[0]
+        note = f"Found as \"{used}\"; add \"{kw}\" word-for-word for strict ATS searches"
 
     return RequirementResult(
         id=req.id,
@@ -302,7 +319,8 @@ def compute(resume: str, job: JobRequirements, resume_ev: ResumeEvidence) -> Sco
     matched, missing = [], []
     for r, req in zip(results, reqs):
         matched += [k for k in r.matched_keywords if k not in matched]
-        if not r.matched_keywords and r.status != "met" and req.keywords and req.keywords[0] not in missing:
+        literal_gap = r.status != "met" or alias_hits(req.keywords, resume_norm)  # found only as "k8s"
+        if not r.matched_keywords and literal_gap and req.keywords and req.keywords[0] not in missing:
             missing.append(req.keywords[0])
 
     return Scorecard(overall, standing_for(overall), categories, results, coverage, matched[:20], missing[:15])
@@ -414,7 +432,7 @@ def compute_resume(resume: str, profile: ResumeProfile) -> Scorecard:
             seen.add(k.term.lower())
             expected.append(k)
     # a keyword counts if the resume uses the term or any common variant of it
-    hits = [k.term for k in expected if keyword_hits([k.term, *k.aliases], resume_norm)]
+    hits = [k.term for k in expected if keyword_hits([k.term, *k.aliases, *variants(k.term)], resume_norm)]
     kw_pct = round(100 * len(hits) / len(expected)) if expected else 0
     parts = {
         "ATS keyword coverage": (kw_pct, f"{len(hits)} of {len(expected)} keywords expected for {profile.target_role or 'this role'} found word-for-word"),
@@ -559,8 +577,9 @@ def compute_profile(profile: LinkedInProfile, target_role: str, expected: list, 
     role_norm, head_norm = _norm(target_role), _norm(profile.headline)
     all_text = _norm(" ".join([profile.headline, profile.about, *(f"{e.title} {e.description}" for e in profile.experiences), *profile.skills]))
     terms = [k for k in expected if k.term.strip()]
-    hits = [k.term for k in terms if keyword_hits([k.term, *k.aliases], all_text)]
-    head_hits = [k.term for k in terms if keyword_hits([k.term, *k.aliases], head_norm)]
+    names = {k.term: [k.term, *k.aliases, *variants(k.term)] for k in terms}
+    hits = [k.term for k in terms if keyword_hits(names[k.term], all_text)]
+    head_hits = [k.term for k in terms if keyword_hits(names[k.term], head_norm)]
     parts: dict[str, tuple[int | None, str]] = {}
 
     role_words = [w for w in role_norm.split() if len(w) > 2]
@@ -572,7 +591,7 @@ def compute_profile(profile: LinkedInProfile, target_role: str, expected: list, 
     )
 
     words = len(profile.about.split())
-    about_kw = [k.term for k in terms if keyword_hits([k.term, *k.aliases], _norm(profile.about))]
+    about_kw = [k.term for k in terms if keyword_hits(names[k.term], _norm(profile.about))]
     parts["About section"] = (
         round(60 * min(1, words / 200)) + round(25 * min(1, len(about_kw) / 3)) + (15 if _has_number(profile.about) else 0),
         f"{words} words (200+ is ideal); {len(about_kw)} target keywords; {'has' if _has_number(profile.about) else 'no'} measurable results",

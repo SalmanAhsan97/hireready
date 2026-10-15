@@ -26,12 +26,95 @@ class JobFetchError(Exception):
     pass
 
 
+# ---- Hidden PDF text ----
+# Keyword-stuffing trick: white, invisible (render mode 3) or microscopic text that ATS parsers read but
+# people don't. It must not raise a score, so it's removed before scoring and the user is told.
+# (Prompted by the hidden-text exploit reported against interviewstreet/hiring-agent.)
+
+SHOW_TEXT = {b"Tj", b"TJ", b"'", b'"'}
+TINY_PT = 2.0
+
+
+def _is_white(args) -> bool:
+    vals = [float(a) for a in args if isinstance(a, (int, float))]
+    if len(vals) == 4:  # CMYK: no ink
+        return all(v <= 0.05 for v in vals)
+    return bool(vals) and len(vals) in (1, 3) and all(v >= 0.95 for v in vals)
+
+
+def _page_text(page) -> tuple[str, list[str]]:
+    """Visible text of a page plus the hidden fragments that were dropped from it."""
+    state = {"white": False, "mode": 0, "size": 12.0}
+    stack, pending, dark_panel, rect = [], [], [False], [0.0]
+    chunks: list[tuple[str, str]] = []  # (text, why hidden or "")
+
+    def before(op, args, cm, tm):
+        if op == b"q":
+            stack.append(dict(state))
+        elif op == b"Q" and stack:
+            state.update(stack.pop())
+        elif op in (b"rg", b"g", b"k", b"sc", b"scn"):
+            state["white"] = _is_white(args)
+        elif op == b"re" and len(args) == 4:
+            rect[0] = abs(float(args[2]) * float(args[3]))
+        elif op in (b"f", b"F", b"f*", b"B", b"b"):
+            # a large coloured panel (designed sidebar/header) can make white text on it visible; lines don't count
+            dark_panel[0] = dark_panel[0] or (not state["white"] and rect[0] >= 5000)
+            rect[0] = 0.0
+        elif op == b"Tr" and args:
+            state["mode"] = int(args[0])
+        elif op == b"Tf" and len(args) > 1:
+            state["size"] = float(args[1])
+        elif op in SHOW_TEXT:
+            scale = (abs(tm[3]) or abs(tm[0]) or 1) * (abs(cm[3]) or abs(cm[0]) or 1)
+            why = ("invisible" if state["mode"] in (3, 7) else "tiny" if state["size"] * scale < TINY_PT
+                   else "white" if state["white"] else "")
+            pending.append(why)
+
+    def visit(text, cm, tm, font, size):
+        why = ""
+        if pending and all(pending):
+            why = pending[-1]
+        pending.clear()
+        chunks.append((text, why))
+
+    page.extract_text(visitor_operand_before=before, visitor_text=visit)
+    hidden = [(t, w) for t, w in chunks if w and t.strip()]
+    if dark_panel[0]:
+        hidden = [(t, w) for t, w in hidden if w != "white"]
+    full = page.extract_text() or ""
+    visible_chars = sum(len(t.strip()) for t, w in chunks if not w)
+    if sum(len(t.strip()) for t, w in hidden if w == "invisible") > visible_chars:
+        hidden = [(t, w) for t, w in hidden if w != "invisible"]  # a scanned page's OCR layer, not a trick
+    for t, _ in hidden:
+        full = full.replace(t.strip(), "", 1)
+    return full, [t.strip() for t, _ in hidden]
+
+
 def extract_resume_text(filename: str, data: bytes) -> str:
+    return extract_resume(filename, data)[0]
+
+
+def extract_resume(filename: str, data: bytes) -> tuple[str, list[str]]:
+    """(resume text, warnings about the file). Hidden PDF text is removed from the text."""
     name = filename.lower()
     links: list[str] = []
+    warnings: list[str] = []
     if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(data))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        pages, hidden = [], []
+        for page in reader.pages:
+            text, dropped = _page_text(page)
+            pages.append(text)
+            hidden += dropped
+        text = "\n".join(pages)
+        if hidden:
+            words = sum(len(h.split()) for h in hidden)
+            sample = " ".join(" ".join(hidden).split()[:12])
+            warnings.append(
+                f"Your PDF has {words} word{'s' * (words != 1)} of hidden text (white, invisible or tiny), e.g. \"{sample}\". "
+                "It was left out of the score. Recruiters and many ATS flag hidden keywords as stuffing, so remove it."
+            )
         # "LinkedIn" / "Portfolio" are often clickable words: the URL lives in the link, not the text
         for page in reader.pages:
             for annot in page.get("/Annots") or []:
@@ -56,7 +139,7 @@ def extract_resume_text(filename: str, data: bytes) -> str:
         raise ValueError(
             "Couldn't read enough text from that resume. If it's a scanned PDF, upload a DOCX or text version."
         )
-    return text
+    return text, warnings
 
 
 BULLET = "•▪◦●‣–-*"

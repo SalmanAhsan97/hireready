@@ -322,6 +322,9 @@ function renderAnalysis() {
   const cap = $("#cap-note"), capReason = a.coverage?.cap_reason;
   cap.hidden = !capReason;
   cap.textContent = capReason ? `${capReason} (would be ${a.coverage.uncapped_score} otherwise).` : "";
+  const warn = $("#file-warn"), warnings = a.warnings || [];
+  warn.hidden = !warnings.length;
+  warn.textContent = warnings.join(" ");
   const link = $("#job-link");
   link.hidden = !job.url; link.href = job.url || "#";
   link.textContent = a.mode === "linkedin" ? "View profile ↗" : "View job posting ↗";

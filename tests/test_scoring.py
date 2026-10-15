@@ -162,3 +162,24 @@ def test_open_to_work_is_reported_not_scored_and_contact_counts_when_known():
     assert "Open to Work frame on" in _cat(on, "Profile completeness").detail
     no_contact = scoring.compute_profile(_profile(has_contact=False, name="JANE DOE"), "Marketing Manager", [])
     assert "email or website" in _cat(no_contact, "Profile completeness").detail and "capitalization" in _cat(no_contact, "Profile completeness").detail
+
+
+def test_abbreviation_counts_for_the_skill_but_not_for_literal_ats_coverage():
+    resume = demo.DEMO_RESUME + "\n- Deployed services on K8s and GCP"
+    job = JobRequirements(job_title="Engineer", company="Acme", requirements=[
+        Requirement(id="r1", kind="skill", text="Kubernetes", importance="must", keywords=["Kubernetes"], min_years=None),
+    ])
+    ev = ResumeEvidence(candidate_name="X", evidence=[Evidence(id="r1", status="met", quote="", years=None)])
+    card = scoring.compute(resume, job, ev)
+    r = card.requirements[0]
+    assert r.status == "met" and r.matched_keywords == []
+    assert '"k8s"' in r.note and '"Kubernetes" word-for-word' in r.note
+    assert "Kubernetes" in card.missing_keywords  # still worth adding literally
+    ats = next(c for c in card.categories if c.name == "ATS keyword coverage")
+    assert ats.score == 0
+
+
+def test_ambiguous_short_forms_are_not_synonyms():
+    from app.synonyms import variants
+    assert "k8s" in variants("Kubernetes") and "Kubernetes".lower() in [v.lower() for v in variants("k8s")]
+    assert variants("Golang") == ["go lang"]  # bare "go" would match ordinary English

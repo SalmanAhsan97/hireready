@@ -1,38 +1,48 @@
-from app.models import Job
-from app.parsing import _html_to_text, linkedin_job_id, linkedin_profile_id, merge_jobs, reflow
+from app.parsing import extract_resume
+
+FILLER = b"".join(b"BT /F1 11 Tf 72 %d Td (Led paid social campaigns for SaaS brands and grew signups forty percent) Tj ET\n" % (500 - 14 * i) for i in range(4))
 
 
-def test_reflow_rejoins_pdf_bullets_and_wrapped_lines():
-    raw = "KEY ACHIEVEMENTS\n •\nGenerated 2,000+ user signups and 106 paid course enrollments through integrated campaigns\nat ilmX.\n•\nDeveloped brand messaging for 15+ brands."
-    lines = reflow(raw).splitlines()
-    assert lines[1] == "• Generated 2,000+ user signups and 106 paid course enrollments through integrated campaigns at ilmX."
-    assert lines[2] == "• Developed brand messaging for 15+ brands."
+def make_pdf(stream: bytes) -> bytes:
+    """A one-page PDF drawing the given content stream with Helvetica as /F1."""
+    stream = FILLER + stream
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+    ]
+    out, offsets = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
 
 
-def test_reflow_keeps_structured_lines_apart():
-    raw = ("Lahore • +92 300 0000000 • name@example.com • LinkedIn • Portfolio\n"
-           "Marketing professional with 4+ years of experience across EdTech and agencies, combining strategy.\n"
-           "MS Business Analytics | FAST-NUCES | 2022 - 2024\n"
-           "Certifications: HubSpot (2025)")
-    assert len(reflow(raw).splitlines()) == 4
+def test_hidden_keywords_are_removed_and_reported():
+    pdf = make_pdf(
+        b"BT /F1 11 Tf 72 700 Td (Marketing Manager) Tj ET\n"
+        b"q 1 1 1 rg BT /F1 11 Tf 72 680 Td (kubernetes python terraform) Tj ET Q\n"
+        b"BT 3 Tr /F1 11 Tf 72 660 Td (golang rust) Tj ET\n"
+        b"BT 0 Tr /F1 0.5 Tf 72 640 Td (snowflake dbt) Tj ET\n"
+    )
+    text, warnings = extract_resume("cv.pdf", pdf)
+    assert "Marketing Manager" in text
+    for word in ("kubernetes", "golang", "snowflake"):
+        assert word not in text
+    assert len(warnings) == 1 and "7 words of hidden text" in warnings[0]
 
 
-def test_html_to_text_keeps_loose_text():
-    html = "<strong>About Acme<br><br></strong>Acme builds things.<ul><li>Own the roadmap</li></ul>"
-    text = _html_to_text(html)
-    assert "About Acme" in text and "Acme builds things." in text and "• Own the roadmap" in text
+def test_white_text_on_a_dark_panel_is_kept():
+    pdf = make_pdf(b"0.1 0.1 0.3 rg 0 600 200 192 re f\nq 1 1 1 rg BT /F1 11 Tf 20 700 Td (Jane Doe Marketing Manager) Tj ET Q\n")
+    text, warnings = extract_resume("cv.pdf", pdf)
+    assert "Jane Doe" in text and warnings == []
 
 
-def test_merge_prefers_fullest_description_and_fills_gaps():
-    a = Job(title="Designer", company="", description="short", criteria=["Seniority level: Senior"], sources=["Bright Data"])
-    b = Job(title="", company="Acme", description="a much longer description", criteria=["Seniority level: Mid", "Salary: $1"], sources=["Apify"])
-    m = merge_jobs([a, b])
-    assert (m.title, m.company, m.description) == ("Designer", "Acme", "a much longer description")
-    assert m.criteria == ["Seniority level: Senior", "Salary: $1"]
-    assert m.sources == ["Bright Data", "Apify"]
-
-
-def test_linkedin_ids():
-    assert linkedin_job_id("https://www.linkedin.com/jobs/view/senior-designer-4459772101/") == "4459772101"
-    assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=4459772101") == "4459772101"
-    assert linkedin_profile_id("https://www.linkedin.com/in/Jane-Doe/?trk=x") == "jane-doe"
+def test_scanned_pages_ocr_layer_is_kept():
+    ocr = b"".join(b"BT 3 Tr /F1 11 Tf 72 %d Td (Scanned resume line with enough words to read clearly) Tj ET\n" % (760 - 14 * i) for i in range(12))
+    text, warnings = extract_resume("cv.pdf", make_pdf(ocr))
+    assert "Scanned resume line" in text and warnings == []

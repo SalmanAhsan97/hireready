@@ -51,6 +51,10 @@ Most AI resume tools ask a model for a score, so the same resume gets a differen
 
 Weights follow [Jobscan's published priorities](https://www.jobscan.co/jobscan-tutorial) — hard skills first, then education, job title and other keywords — and categories the posting doesn't ask for are left out instead of awarding free points. Missing must-haves cap the score so a candidate can't look like a "top candidate" while lacking a stated requirement.
 
+Abbreviations count for the skill ("K8s" shows Kubernetes, via a curated synonym map adapted from [ats-screener](https://github.com/sunnypatell/ats-screener), MIT), but the *ATS keyword coverage* stays word-for-word and the report tells you to add the posting's exact term, since strict ATS like Taleo search literally.
+
+Hidden text can't buy points: white, invisible or microscopic text in a PDF is removed before scoring and the user is warned. (This trick inflated scores in [hiring-agent](https://github.com/interviewstreet/hiring-agent)'s LLM-based scorer.) White text on a dark designed panel and a scanned page's OCR layer are left alone.
+
 Guardrails against made-up content: resume edits may only use facts from the resume or the user's own messages, and code flags any figure in an edit that appears in neither.
 
 ## Architecture

@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from . import ai, cache
 from .models import Analysis, ChatMessage, Job
-from .parsing import JobFetchError, extract_resume_text, fetch_job, fetch_linkedin_profile, linkedin_sources
+from .parsing import JobFetchError, extract_resume, extract_resume_text, fetch_job, fetch_linkedin_profile, linkedin_sources
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_UPLOAD = 5 * 1024 * 1024
@@ -110,7 +110,7 @@ async def analyze(
     if len(data) > MAX_UPLOAD:
         raise HTTPException(413, "Resume file is over 5 MB.")
     try:
-        resume_text = extract_resume_text(resume.filename or "", data)
+        resume_text, file_warnings = extract_resume(resume.filename or "", data)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -134,6 +134,7 @@ async def analyze(
         analysis = await (ai.analyze(resume_text, job) if job.description else ai.analyze_resume(resume_text))
     except ai.AIError as e:
         raise HTTPException(502, str(e))
+    analysis.warnings = file_warnings
     await cache.save_analysis({
         "job_url": job.url,
         "job_title": analysis.job_title,

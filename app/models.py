@@ -267,6 +267,7 @@ class Analysis(BaseModel):
     requirements: List[RequirementResult] = []
     coverage: Optional[Coverage] = None
     mode: Literal["job", "resume", "linkedin"] = "job"  # "resume" = no job posting; "linkedin" = profile review
+    warnings: List[str] = []  # problems with the uploaded file itself (e.g. hidden text), found in code
 
 
 class ChatMessage(BaseModel):

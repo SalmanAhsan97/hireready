@@ -155,17 +155,24 @@ def merge_jobs(jobs: list[Job]) -> Job:
 
 
 def _html_to_text(desc: str) -> str:
+    """Keep every piece of text (not just text inside <p>/<li>), with line breaks where the HTML had them."""
     if "<" not in desc:
         return desc.strip()
     soup = BeautifulSoup(desc, "html.parser")
-    for li in soup.find_all("li"):
-        li.insert(0, "• ")
+    for el in soup.find_all(["button", "script", "style"]):
+        el.decompose()
     for br in soup.find_all("br"):
         br.replace_with("\n")
-    block_tags = ["p", "li", "h1", "h2", "h3", "h4"]
-    blocks = [b for b in soup.find_all(block_tags) if not b.find(block_tags)]
-    text = "\n".join(b.get_text(" ", strip=True) for b in blocks) if blocks else soup.get_text("\n")
-    return re.sub(r"\n\s*\n+", "\n", text).strip()
+    for li in soup.find_all("li"):
+        li.insert(0, "• ")
+    for block in soup.find_all(["p", "div", "section", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"]):
+        block.append("\n")
+    lines = [re.sub(r"[ \t\xa0]+", " ", line).strip() for line in soup.get_text().splitlines()]
+    text = "\n".join(lines)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+NOT_STATED = {"", "none", "null", "not applicable", "n/a"}
 
 
 APIFY_API = "https://api.apify.com/v2"
@@ -217,7 +224,7 @@ def _job_from_apify(rec: dict, url: str) -> Job:
             ("Salary", "salary"),
             ("Benefits", "benefits"),
         ]
-        if rec.get(key)
+        if str(rec.get(key) or "").strip().lower() not in NOT_STATED
     ]
     return Job(
         url=url,
@@ -302,7 +309,7 @@ def _job_from_brightdata(rec: dict, url: str) -> Job:
         v = rec.get(keys[0]) or (rec.get(keys[1]) if len(keys) > 1 else None)
         if isinstance(v, dict):
             v = " ".join(str(x) for x in v.values() if x)
-        if v:
+        if str(v or "").strip().lower() not in NOT_STATED:
             criteria.append(f"{label}: {v}")
     return Job(
         url=_first(rec, "url") or url,

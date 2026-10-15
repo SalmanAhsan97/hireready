@@ -166,9 +166,16 @@
       </div>
       <p class="verdict" id="cmp-verdict"></p>
       <div class="cmp-cards" id="cmp-cards"></div>
-      <h3>Requirement by requirement</h3>
+      <div class="cmp-grid-head">
+        <h3>Requirement by requirement</h3>
+        <ul class="cmp-legend" aria-label="Legend">
+          <li><span class="mark st-met">✓</span>Met</li>
+          <li><span class="mark st-partial">½</span>Partly met</li>
+          <li><span class="mark st-missing">✗</span>Missing</li>
+        </ul>
+      </div>
       <div class="cmp-table-wrap"><table class="cmp-table" id="cmp-table"></table></div>
-      <p class="hint">Calculated in code from the same requirements for every resume. ✓ met · ½ partly · ✗ missing.</p>
+      <p class="cmp-foot">Calculated in code from the same requirements for every resume.</p>
     </section>
 
     <section id="results" hidden>

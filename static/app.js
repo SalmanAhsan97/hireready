@@ -233,7 +233,7 @@ async function submitLinkedIn() {
 $("#compare_files").addEventListener("change", () => {
   $("#compare-picked").innerHTML = [...$("#compare_files").files].map((f) => `<li>${esc(f.name)}</li>`).join("");
 });
-const STATUS_MARK = { met: ["✓", "st-met"], partial: ["½", "st-partial"], missing: ["✗", "st-missing"] };
+const STATUS_MARK = { met: ["✓", "st-met", "Met"], partial: ["½", "st-partial", "Partly met"], missing: ["✗", "st-missing", "Missing"] };
 const CHANCES = { "top candidate": "Strong shortlist chances", competitive: "Good shortlist chances", possible: "Fair chances", "long shot": "Low chances" };
 
 function renderComparison(c, job) {
@@ -258,7 +258,7 @@ function renderComparison(c, job) {
   }).join("");
   $("#cmp-table").innerHTML = `<thead><tr><th>Requirement</th>${c.entries.map((e) => `<th title="${esc(e.name)}">${esc(e.name)}</th>`).join("")}</tr></thead>
     <tbody>${c.rows.map((r) => `<tr><td>${esc(r.text)}${r.importance === "must" ? '<span class="cmp-must">must</span>' : ""}</td>${
-      r.statuses.map((st) => `<td class="${STATUS_MARK[st][1]}">${STATUS_MARK[st][0]}</td>`).join("")}</tr>`).join("")}</tbody>`;
+      r.statuses.map((st) => `<td><span class="mark ${STATUS_MARK[st][1]}" title="${STATUS_MARK[st][2]}" aria-label="${STATUS_MARK[st][2]}">${STATUS_MARK[st][0]}</span></td>`).join("")}</tr>`).join("")}</tbody>`;
   $("#compare-results").scrollIntoView({ behavior: "smooth" });
 }
 

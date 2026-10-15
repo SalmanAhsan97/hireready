@@ -116,15 +116,17 @@ async def save_analysis(row: dict):
 _local_usage: dict[str, list[float]] = {}
 
 
-async def count_and_record_usage(client: str, action: str, window_s: float = 86400) -> int:
-    """Record one use and return how many uses this client has made in the window, including this one."""
+async def count_and_record_usage(client: str, action: str, window_s: float = 86400, group: tuple[str, ...] = ()) -> int:
+    """Record one use and return how many uses (of the actions in `group`, default just this one) this client
+    has made in the window, including this one."""
+    group = group or (action,)
     if supabase_enabled():
         try:
             since = datetime.fromtimestamp(time.time() - window_s, timezone.utc).isoformat()
             (await _sb().post("/hireready_usage", headers={"Prefer": "return=minimal"}, json={"client": client, "action": action})).raise_for_status()
             resp = await _sb().get(
                 "/hireready_usage",
-                params={"client": f"eq.{client}", "created_at": f"gte.{since}", "select": "id"},
+                params={"client": f"eq.{client}", "created_at": f"gte.{since}", "action": f"in.({','.join(group)})", "select": "id"},
                 headers={"Prefer": "count=exact", "Range": "0-0"},
             )
             resp.raise_for_status()
@@ -132,6 +134,7 @@ async def count_and_record_usage(client: str, action: str, window_s: float = 864
         except (httpx.HTTPError, ValueError) as e:
             log.warning("Supabase usage tracking failed, counting in memory: %r", e)
     now = time.time()
-    hits = [t for t in _local_usage.get(client, []) if now - t < window_s] + [now]
-    _local_usage[client] = hits
+    key = f"{client}:{','.join(sorted(group))}"
+    hits = [t for t in _local_usage.get(key, []) if now - t < window_s] + [now]
+    _local_usage[key] = hits
     return len(hits)

@@ -101,8 +101,17 @@ class ResumeProfile(BaseModel):
     target_role: str  # the role this resume is best positioned for
     seniority: Literal["entry", "mid", "senior", "lead", "executive"]
     hard_skills: List[str]  # tools/skills exactly as written in the resume
-    expected_keywords: List[str]  # terms recruiters and ATS expect for target_role
     roles: List[ResumeRole]
+    expected_keywords: List["RoleKeyword"] = []  # filled from RoleKeywords, generated without seeing the resume
+
+
+class RoleKeyword(BaseModel):
+    term: str
+    aliases: List[str]  # common variants an ATS treats as the same thing (e.g. GA4 for Google Analytics)
+
+
+class RoleKeywords(BaseModel):
+    keywords: List[RoleKeyword]
 
 
 ResumeCategoryName = Literal[
@@ -184,6 +193,18 @@ class Analysis(BaseModel):
     mode: Literal["job", "resume"] = "job"  # "resume" = scored without a job posting
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ResumeEdit(BaseModel):
+    reply: str  # short message back to the user
+    changed: bool  # False when the reply only asks a question or declines
+    changes: List[str]  # one line per edit made
+    resume_markdown: str  # the full resume after the edits
+
+
 class TalkingPoint(BaseModel):
     question: str
     answer_outline: str
@@ -201,3 +222,6 @@ class ApplyKit(BaseModel):
     who_to_contact: List[str]
     interview_talking_points: List[TalkingPoint]
     application_checklist: List[str]
+
+
+ResumeProfile.model_rebuild()

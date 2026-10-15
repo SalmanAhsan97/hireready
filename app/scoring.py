@@ -22,13 +22,15 @@ from .models import (
     ResumeProfile,
 )
 
+# Priorities follow Jobscan's published order (hard skills > education > job title > soft skills/keywords);
+# impact and formatting matter to human reviewers, so they keep a small share.
 WEIGHTS = {
-    "Hard skills & tools": 30,
-    "Relevant experience & seniority": 25,
+    "Hard skills & tools": 40,
+    "Relevant experience & seniority": 20,
     "ATS keyword coverage": 15,
-    "Impact & quantified results": 15,
-    "Education & certifications": 5,
-    "Clarity & formatting": 10,
+    "Impact & quantified results": 10,
+    "Education & certifications": 10,
+    "Clarity & formatting": 5,
 }
 CREDIT = {"met": 1.0, "partial": 0.5, "missing": 0.0}
 IMPORTANCE = {"must": 2, "nice": 1}
@@ -63,7 +65,11 @@ def keyword_hits(keywords: Iterable[str], resume_norm: str) -> List[str]:
         k = _norm(kw)
         if not k:
             continue
-        if re.search(rf"(?<![a-z0-9]){re.escape(k)}(?:s|es)?(?![a-z0-9])", resume_norm) and kw not in hits:
+        exact = rf"(?<![a-z0-9]){re.escape(k)}(?:s|es)?(?![a-z0-9])"
+        # multi-word terms may be split by a word or two: "Meta & Google Ads" covers "Meta Ads"
+        words = k.split()
+        near = r"(?<![a-z0-9])" + r"(?:\s+\S+){0,2}?\s+".join(map(re.escape, words)) + r"(?:s|es)?(?![a-z0-9])" if len(words) > 1 else None
+        if (re.search(exact, resume_norm) or (near and re.search(near, resume_norm))) and kw not in hits:
             hits.append(kw)
     return hits
 
@@ -83,19 +89,60 @@ def quote_found(quote: str, resume_tokens: str, resume_vocab: set) -> bool:
     return True
 
 
+# ---- Degrees (compared in code, so "Master's" always satisfies "Bachelor's required") ----
+
+DEGREE_PATTERNS = [
+    (4, r"\b(ph\.?\s?d|doctorate|doctoral|d\.?phil)\b"),
+    (3, r"\b(masters?|master's|m\.?sc|msc|mba|m\.?eng|m\.?phil|mphil|ms|m\.s\.|ma|m\.a\.|postgraduate|graduate degree)\b"),
+    (2, r"\b(bachelors?|bachelor's|b\.?sc|bsc|bba|b\.?eng|b\.?com|bcom|bs|b\.s\.|ba|b\.a\.|undergraduate|4-year degree|four-year degree)\b"),
+    (1, r"\b(associates?|associate's|diploma|a-levels?|high school)\b"),
+]
+DEGREE_NAMES = {4: "a doctorate", 3: "a master's", 2: "a bachelor's", 1: "a diploma"}
+NOT_DEGREE = r"\bms (office|excel|word|powerpoint|teams|project|access|outlook|dynamics)\b"
+
+
+def degree_levels(text: str) -> list[int]:
+    t = re.sub(NOT_DEGREE, " ", text.lower().replace("’", "'"))
+    return [lvl for lvl, pat in DEGREE_PATTERNS if re.search(pat, t)]
+
+
+def resume_degree(resume: str) -> int | None:
+    """Highest degree in the education section (or on lines that mention a school), else None."""
+    lines, in_edu, picked = resume.splitlines(), False, []
+    for line in lines:
+        if re.match(r"^\W*(education|academic)", line, re.I):
+            in_edu = True
+            continue
+        if in_edu and HEADING_LINE.match(line.strip()):
+            in_edu = False
+        if in_edu or re.search(r"universit|college|institute|school of|degree", line, re.I):
+            picked.append(line)
+    levels = degree_levels("\n".join(picked))
+    return max(levels) if levels else None
+
+
+HEADING_LINE = re.compile(r"^[A-Z][A-Z &/]{3,}$")
+
+
 # ---- Requirement coverage ----
 
-def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_tokens: str, vocab: set) -> RequirementResult:
+def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_tokens: str, vocab: set, resume_text: str) -> RequirementResult:
     hits = keyword_hits(req.keywords, resume_norm)
     quote = (ev.quote if ev else "").strip()
     verified = bool(quote) and quote_found(quote, resume_tokens, vocab)
     claimed = ev.status if ev else "missing"
     note = ""
 
-    if req.kind == "experience" and req.min_years and ev and ev.years is not None:
+    needed = degree_levels(req.text) if req.kind == "education" else []
+    have = resume_degree(resume_text) if needed else None
+    if needed and have is not None:
+        need = min(needed)  # "Bachelor's or Master's" -> a bachelor's is the minimum
+        status = "met" if have >= need else "partial" if have == need - 1 else "missing"
+        note = f"You have {DEGREE_NAMES[have]}; this asks for {DEGREE_NAMES[need]}"
+    elif req.kind == "experience" and req.min_years and ev and ev.years is not None:
         ratio = ev.years / req.min_years
         status = "met" if ratio >= 1 else "partial" if ratio >= 0.75 else "missing"
-        note = f"{ev.years:g} of {req.min_years} years"
+        note = f"{ev.years:g} years (asks for {req.min_years}+)"
     elif claimed == "met":
         status = "met" if verified or hits else "partial"
         if status == "partial":
@@ -138,9 +185,9 @@ def _requirement_category(results: List[RequirementResult], kinds: set, none_tex
     subset = [r for r in results if r.kind in kinds]
     pct = _weighted_pct(subset)
     if pct is None:
-        return 100, none_text
+        return None, none_text + " — not counted"
     detail = _coverage_detail(subset)
-    years = [r.note for r in subset if r.kind == "experience" and "years" in r.note]
+    years = [r.note for r in subset if r.kind == "experience" and "years (asks" in r.note]
     return pct, detail + (f" ({'; '.join(years)})" if years else "")
 
 
@@ -167,9 +214,11 @@ CLARITY_CHECKS = [
     ("phone or LinkedIn", lambda r: re.search(r"linkedin\.com|\+?\d[\d\s().-]{7,}\d", r, re.I)),
     ("Experience section", lambda r: re.search(r"^\W*(work |professional )?experience\b", r, re.I | re.M)),
     ("Education section", lambda r: re.search(r"^\W*education\b", r, re.I | re.M)),
-    ("Skills section", lambda r: re.search(r"^\W*(technical |core )?skills\b", r, re.I | re.M)),
+    ("Skills section", lambda r: re.search(
+        r"^\W*((technical |core |key )?(skills|competencies)|areas? of expertise|expertise|tools\b|technologies)", r, re.I | re.M)),
     ("length of 250-1100 words", lambda r: 250 <= len(r.split()) <= 1100),
-    ("no wall-of-text lines (40+ words)", lambda r: all(len(l.split()) < 40 for l in r.splitlines())),
+    ("no wall-of-text bullets (45+ words) or paragraphs (90+ words)", lambda r: all(
+        len(l.split()) < (45 if re.match(r"^[-*•▪◦●‣–]", l.strip()) else 90) for l in r.splitlines())),
 ]
 
 
@@ -198,7 +247,7 @@ def compute(resume: str, job: JobRequirements, resume_ev: ResumeEvidence) -> Sco
     resume_tokens, vocab = f" {' '.join(toks)} ", set(toks)
     by_id = {e.id: e for e in resume_ev.evidence}
     reqs = sorted(job.requirements, key=lambda r: r.importance != "must")  # musts first, posting order kept
-    results = [_assess(r, by_id.get(r.id), resume_norm, resume_tokens, vocab) for r in reqs]
+    results = [_assess(r, by_id.get(r.id), resume_norm, resume_tokens, vocab, resume) for r in reqs]
 
     with_kw = [r for r, req in zip(results, reqs) if req.keywords]
     kw_total = sum(IMPORTANCE[r.importance] for r in with_kw)
@@ -213,8 +262,12 @@ def compute(resume: str, job: JobRequirements, resume_ev: ResumeEvidence) -> Sco
         "Education & certifications": _requirement_category(results, {"education", "certification"}, "No education or certification required"),
         "Clarity & formatting": _clarity(resume),
     }
-    categories = [CategoryScore(name=n, score=s, weight=WEIGHTS[n], detail=d, rationale="") for n, (s, d) in parts.items()]
-    uncapped = round(sum(c.score * c.weight for c in categories) / 100)
+    categories = [
+        CategoryScore(name=n, score=0 if sc is None else sc, weight=0 if sc is None else WEIGHTS[n], detail=d, rationale="")
+        for n, (sc, d) in parts.items()
+    ]
+    counted = sum(c.weight for c in categories) or 1
+    uncapped = round(sum(c.score * c.weight for c in categories) / counted)
 
     musts = [r for r in results if r.importance == "must"]
     nices = [r for r in results if r.importance == "nice"]
@@ -286,7 +339,7 @@ RESUME_WEIGHTS = {
     "Contact & profile": 10,
 }
 WEAK_OPENERS = ("responsible for", "worked on", "helped", "assisted", "involved in", "participated in",
-                "tasked with", "duties included", "in charge of", "handled", "various")
+                "tasked with", "duties included", "in charge of", "handled", "various", "supported", "worked with")
 STRONG_VERBS = {
     "achieved", "built", "created", "cut", "delivered", "designed", "developed", "drove", "grew", "improved",
     "increased", "launched", "led", "managed", "mentored", "negotiated", "owned", "reduced", "ran", "shipped",
@@ -327,16 +380,20 @@ def _experience_detail(profile: ResumeProfile) -> tuple[int, str]:
     if not profile.roles:
         return 0, "No roles found"
     dated = sum(bool(r.start.strip() and r.end.strip()) for r in profile.roles)
-    detailed = sum(r.bullets >= 3 for r in profile.roles)
-    score = round(100 * (dated + detailed) / (2 * len(profile.roles)))
-    return score, f"{dated} of {len(profile.roles)} roles dated, {detailed} with 3+ bullets"
+    # recent roles carry the weight: grade bullet depth on the 3 most recent (partial credit below 3 bullets)
+    recent = profile.roles[:3]
+    depth = sum(min(r.bullets, 3) / 3 for r in recent) / len(recent)
+    score = round(50 * dated / len(profile.roles) + 50 * depth)
+    full = sum(r.bullets >= 3 for r in recent)
+    return score, f"{dated} of {len(profile.roles)} roles dated; {full} of {len(recent)} recent roles have 3+ bullets"
 
 
 CONTACT_CHECKS = [
     ("email", lambda r: re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", r)),
     ("phone", lambda r: re.search(r"\+?\d[\d\s().-]{7,}\d", r)),
     ("LinkedIn URL", lambda r: re.search(r"linkedin\.com/in/", r, re.I)),
-    ("summary section", lambda r: re.search(r"^\W*(summary|profile|about( me)?|professional summary)\b", r, re.I | re.M)),
+    ("summary section", lambda r: re.search(r"^\W*(summary|profile|about( me)?|professional summary|objective)\b", r, re.I | re.M)
+        or any(len(l.split()) >= 25 for l in r.splitlines()[:8])),  # an unlabeled intro paragraph counts
 ]
 
 
@@ -348,8 +405,13 @@ def _contact(resume: str) -> tuple[int, str]:
 
 def compute_resume(resume: str, profile: ResumeProfile) -> Scorecard:
     resume_norm = _norm(resume)
-    expected = list(dict.fromkeys(k for k in profile.expected_keywords if k.strip()))
-    hits = keyword_hits(expected, resume_norm)
+    seen, expected = set(), []
+    for k in profile.expected_keywords:
+        if k.term.strip() and k.term.lower() not in seen:
+            seen.add(k.term.lower())
+            expected.append(k)
+    # a keyword counts if the resume uses the term or any common variant of it
+    hits = [k.term for k in expected if keyword_hits([k.term, *k.aliases], resume_norm)]
     kw_pct = round(100 * len(hits) / len(expected)) if expected else 0
     parts = {
         "ATS keyword coverage": (kw_pct, f"{len(hits)} of {len(expected)} keywords expected for {profile.target_role or 'this role'} found word-for-word"),
@@ -362,7 +424,7 @@ def compute_resume(resume: str, profile: ResumeProfile) -> Scorecard:
     }
     categories = [CategoryScore(name=n, score=s, weight=RESUME_WEIGHTS[n], detail=d, rationale="") for n, (s, d) in parts.items()]
     overall = round(sum(c.score * c.weight for c in categories) / 100)
-    missing = [k for k in expected if k not in hits]
+    missing = [k.term for k in expected if k.term not in hits]
     return Scorecard(overall, standing_for(overall), categories, [], None, hits[:20], missing[:15])
 
 

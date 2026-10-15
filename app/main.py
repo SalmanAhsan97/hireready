@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ai, cache
-from .models import Analysis, Job
+from .models import Analysis, ChatMessage, Job
 from .parsing import JobFetchError, extract_resume_text, fetch_job, linkedin_sources
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -26,7 +26,8 @@ app = FastAPI(title="HireReady")
 
 # Public deploys: require a shared access code and cap paid work (scrapes + Claude calls) per visitor per day.
 ACCESS_CODE = os.getenv("HIREREADY_ACCESS_CODE", "")
-DAILY_LIMIT = int(os.getenv("HIREREADY_DAILY_LIMIT", "15"))
+DAILY_LIMIT = int(os.getenv("HIREREADY_DAILY_LIMIT", "15"))  # analyses + application kits
+CHAT_LIMIT = int(os.getenv("HIREREADY_CHAT_LIMIT", "40"))  # resume-chat messages
 _SALT = os.getenv("HIREREADY_CLIENT_SALT", ACCESS_CODE or "hireready")
 
 
@@ -41,11 +42,12 @@ def _client_id(request: Request) -> str:
 
 
 async def enforce_limit(request: Request, action: str):
-    if DAILY_LIMIT <= 0:
+    limit, group, what = (CHAT_LIMIT, ("chat",), "messages") if action == "chat" else (DAILY_LIMIT, ("analyze", "kit"), "runs")
+    if limit <= 0:
         return
-    used = await cache.count_and_record_usage(_client_id(request), action)
-    if used > DAILY_LIMIT:
-        raise HTTPException(429, f"You've reached today's limit of {DAILY_LIMIT} runs. Try again tomorrow.")
+    used = await cache.count_and_record_usage(_client_id(request), action, group=group)
+    if used > limit:
+        raise HTTPException(429, f"You've reached today's limit of {limit} {what}. Try again tomorrow.")
 
 
 @app.get("/api/status")
@@ -123,6 +125,28 @@ async def apply_kit(req: KitRequest, request: Request):
     except ai.AIError as e:
         raise HTTPException(502, str(e))
     return {"kit": kit, "demo": ai.demo_mode()}
+
+
+class ChatRequest(BaseModel):
+    resume_text: str
+    resume_markdown: str = ""
+    messages: list[ChatMessage]
+    job: Job | None = None
+    analysis: Analysis | None = None
+
+
+@app.post("/api/resume-chat", dependencies=[Depends(require_access)])
+async def resume_chat(req: ChatRequest, request: Request):
+    if not req.messages or req.messages[-1].role != "user" or not req.messages[-1].content.strip():
+        raise HTTPException(400, "Type what you'd like changed.")
+    if len(req.messages[-1].content) > 2000:
+        raise HTTPException(400, "Keep requests under 2,000 characters.")
+    await enforce_limit(request, "chat")
+    try:
+        edit = await ai.edit_resume(req.resume_text, req.resume_markdown, req.messages, req.job, req.analysis)
+    except ai.AIError as e:
+        raise HTTPException(502, str(e))
+    return {"edit": edit, "demo": ai.demo_mode()}
 
 
 class DocxRequest(BaseModel):

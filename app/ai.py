@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 
 import anthropic
 import httpx
@@ -22,9 +23,12 @@ from .models import (
     Job,
     JobRequirements,
     Narrative,
+    ChatMessage,
+    ResumeEdit,
     ResumeEvidence,
     ResumeNarrative,
     ResumeProfile,
+    RoleKeywords,
 )
 
 MODEL = os.getenv("HIREREADY_MODEL", "claude-opus-5-5")
@@ -75,7 +79,9 @@ When a rewrite would benefit from a metric the resume lacks, use a bracketed pla
 
 REQUIREMENTS_RULES = """Requirements (job side):
 - List every distinct requirement the posting states: skills/tools, years of experience, the role/title \
-level, education, certifications. 8-20 items; split compound lines ("React and TypeScript") into separate items.
+level, education, certifications. 10-25 items.
+- ONE skill, tool or method per requirement. Split lists: "paid ads, SEO, email and social media" is four \
+requirements ("Paid ads", "SEO", "Email marketing", "Social media marketing"), each with its own keywords.
 - importance "must" = stated as required / must / minimum / essential, or plainly core to the role. \
 "nice" = preferred, bonus, plus, nice-to-have, familiarity with.
 - keywords: 1-4 short literal terms an ATS would search for, most canonical first, including common \
@@ -120,12 +126,17 @@ RESUME_EXTRACT_INSTRUCTIONS = """No job posting was given. Extract the facts use
 
 - target_role: the job title this resume is best positioned for, based on the most recent roles.
 - seniority: the level that title implies for this candidate.
+- target_role should be a common, searchable job title (e.g. "Marketing Manager", not a niche internal title).
 - hard_skills: every concrete tool, technology, method or domain skill named in the resume, copied exactly as written.
-- expected_keywords: 15 terms that recruiters and ATS filters most commonly look for in resumes for target_role at \
-this seniority (tools, methods, domain terms). Include them whether or not this resume has them; use the most \
-common short spelling (e.g. "Figma", "A/B testing", "SQL").
 - roles: every position in the experience section, with start/end exactly as written ("" if missing) and the \
 number of bullet or achievement lines under it."""
+
+ROLE_KEYWORDS_INSTRUCTIONS = """List the 20 terms that most often appear as requirements in job postings for a {seniority}-level \
+{role}: tools, platforms, methods, metrics and domain terms an ATS would search for. No soft skills or generic \
+traits ("communication", "team player"). Use the most common short spelling (e.g. "Google Ads", "A/B testing", \
+"SQL"), most important first. For each, give aliases: the common variants and abbreviations an ATS would treat \
+as the same skill (e.g. "Google Analytics" -> ["GA4", "Google Analytics 4"]; "Pay-per-click" -> ["PPC", \
+"paid search"]). Empty list if none."""
 
 RESUME_NARRATIVE_INSTRUCTIONS = """No job posting was given, so this is a general resume review for the target role \
 in the scorecard. The scorecard above was computed by code. The scores are final: explain them, don't re-score.
@@ -139,6 +150,23 @@ gives a match score for a specific role.
 Empty list if none.
 - changes: 6-12 specific edits, highest impact first: missing expected keywords the candidate can truthfully \
 add, quantifying results, stronger action verbs, then structure. `suggested` is ready-to-paste text."""
+
+CHAT_INSTRUCTIONS = """You are editing the candidate's resume with them, one request at a time.
+
+- Apply the latest user request to <current_resume> and return the FULL updated resume in clean Markdown \
+(# Name, a contact line, ## sections, - bullets). On the first edit, convert the original resume to that format \
+without changing its content, then apply the request.
+- Change only what the request asks for; keep everything else word-for-word.
+- Truthfulness is the top rule. Use ONLY facts stated in the original resume or by the user in this conversation. \
+Never invent or inflate employers, titles, dates, years of experience, degrees, certifications, tools, skills, \
+responsibilities (e.g. budgets, team sizes, revenue) or numbers. Keep existing numbers exactly as written \
+("4+ years" stays "4+ years"). You may echo the job's wording only for things the resume already shows.
+- Where a metric would help but isn't known, insert a [placeholder] such as [X%] or [N clients] and say so.
+- If the request needs facts you don't have, or would make the resume untruthful, set changed=false, return the \
+resume unchanged, and ask for what you need in `reply`.
+- reply: 1-3 friendly sentences on what you did (or what you need). changes: one short line per content edit \
+(don't mention the Markdown conversion).
+- Use the analysis and job (when given) to make suggestions specific, e.g. "apply the high-priority changes"."""
 
 KIT_INSTRUCTIONS = """The candidate has the analysis above. Build their application kit so they stand out \
 as a top candidate for this specific role.
@@ -169,7 +197,7 @@ def _job_block(job: Job) -> str:
 
 # ---- Extraction cache ----
 
-EXTRACT_VERSION = "1"  # bump when the extraction prompts change, to invalidate cached facts
+EXTRACT_VERSION = "2"  # bump when the extraction prompts change, to invalidate cached facts
 
 
 def _key(*parts: str) -> str:
@@ -346,6 +374,19 @@ async def analyze(resume: str, job: Job) -> Analysis:
     )
 
 
+async def role_keywords(role: str, seniority: str) -> list:
+    """Keywords expected for a role, generated WITHOUT the resume (so they can't be biased toward it) and
+    cached per role, so every resume for the same role is measured against the same list."""
+    norm = " ".join(role.lower().split())
+    key = _key("role-keywords-v2", norm, seniority)
+    cached = await cache.get("roles", key, RoleKeywords)
+    if not cached:
+        prompt = ROLE_KEYWORDS_INSTRUCTIONS.format(role=role, seniority=seniority)
+        cached = await _parse(prompt, RoleKeywords, effort="low")
+        await cache.put("roles", key, cached)
+    return cached.keywords[:20]
+
+
 async def analyze_resume(resume: str) -> Analysis:
     """General resume score when no job is given. Same split: model extracts facts, code scores."""
     if demo_mode():
@@ -353,12 +394,13 @@ async def analyze_resume(resume: str) -> Analysis:
         resume = demo.DEMO_RESUME
         profile = ResumeProfile.model_validate(demo.DEMO_PROFILE)
     else:
-        key = _key("resume-profile", resume)
+        key = _key("resume-profile-v2", resume)
         profile = await cache.get("profiles", key, ResumeProfile)
         if not profile:
             content = f"<resume>\n{resume}\n</resume>\n\n{RESUME_EXTRACT_INSTRUCTIONS}"
             profile = await _parse(content, ResumeProfile, effort="medium")
             await cache.put("profiles", key, profile)
+        profile.expected_keywords = await role_keywords(profile.target_role, profile.seniority)
 
     card = scoring.compute_resume(resume, profile)
 
@@ -372,6 +414,35 @@ async def analyze_resume(resume: str) -> Analysis:
         narrative = await _parse(content, ResumeNarrative, effort="medium")
 
     return scoring.assemble_resume(card, narrative, profile)
+
+
+async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage], job: Job | None, analysis: Analysis | None) -> ResumeEdit:
+    if demo_mode():
+        from .demo import DEMO_CHAT_REPLY
+        return ResumeEdit(reply=DEMO_CHAT_REPLY, changed=False, changes=[], resume_markdown=current_md or resume)
+    history = "\n".join(f"<{m.role}>{m.content}</{m.role}>" for m in messages[-10:])
+    context = ""
+    if job and job.description:
+        context += _job_block(job) + "\n\n"
+    if analysis:
+        brief = {k: analysis.model_dump()[k] for k in ("overall_score", "job_title", "missing_keywords", "gaps", "changes")}
+        context += f"<analysis>\n{json.dumps(brief, indent=1)}\n</analysis>\n\n"
+    content = (
+        f"{context}<original_resume>\n{resume}\n</original_resume>\n\n"
+        f"<current_resume>\n{current_md or '(not converted yet — use the original)'}\n</current_resume>\n\n"
+        f"<conversation>\n{history}\n</conversation>\n\n{CHAT_INSTRUCTIONS}"
+    )
+    edit = await _parse(content, ResumeEdit, effort="medium")
+    if not edit.changed or not edit.resume_markdown.strip():
+        edit.resume_markdown = current_md or edit.resume_markdown or resume
+        return edit
+    # Safety net: flag any figure that appears in neither the original resume nor the user's own messages.
+    known = resume + " " + " ".join(m.content for m in messages if m.role == "user")
+    unbracketed = re.sub(r"\[[^\]]*\]", " ", edit.resume_markdown)
+    new_figures = sorted({n for n in re.findall(r"\d[\d,.]*\+?%?", unbracketed) if n.rstrip(".,") not in known})
+    if new_figures:
+        edit.changes.append("Please verify — these figures aren't in your original resume: " + ", ".join(new_figures[:8]))
+    return edit
 
 
 async def build_kit(resume: str, job: Job, analysis: Analysis) -> ApplyKit:

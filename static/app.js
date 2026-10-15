@@ -1,6 +1,6 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-const state = { resumeText: "", job: null, analysis: null, kit: null };
+const state = { resumeText: "", job: null, analysis: null, kit: null, chat: { messages: [], md: "" } };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\[([^\]]+)\]/g, '<span class="ph">[$1]</span>');
@@ -195,6 +195,7 @@ $("#analyze-form").addEventListener("submit", async (e) => {
     await loader.finish();
     ok = true;
     store.set("hireready_access_code", $("#access_code").value.trim());
+    state.demo = data.demo;
     state.resumeText = data.resume_text; state.job = data.job; state.analysis = data.analysis; state.kit = null;
     renderAnalysis();
   } catch (err) {
@@ -225,6 +226,7 @@ function renderAnalysis() {
   let n = 0;
   const tick = setInterval(() => { n = Math.min(score, n + 2); $("#score-num").textContent = n; if (n >= score) clearInterval(tick); }, 16);
 
+  $("#demo-banner").hidden = !state.demo;
   const resumeOnly = a.mode === "resume";
   const title = a.job_title || job.title, company = a.company || job.company;
   $("#job-line").textContent = resumeOnly
@@ -263,6 +265,7 @@ function renderAnalysis() {
   requestAnimationFrame(() => $$(".bar > div").forEach((b) => (b.style.width = b.dataset.w + "%")));
 
   renderRequirements(a);
+  resetChat();
 
   $("#kw-matched").innerHTML = a.matched_keywords.map((k) => `<span class="chip">${esc(k)}</span>`).join("") || "<small>None found</small>";
   $("#kw-missing").innerHTML = a.missing_keywords.map((k) => `<span class="chip">${esc(k)}</span>`).join("") || "<small>Nothing major missing</small>";
@@ -320,6 +323,94 @@ function renderRequirements(a) {
   };
   $("#requirements").innerHTML = group("must", "Must-have") + group("nice", "Nice-to-have");
 }
+
+// ---- Resume chat ----
+function chatSuggestions() {
+  const a = state.analysis, hasJob = a?.mode !== "resume";
+  return [
+    "Apply the high-priority changes",
+    "Make my summary punchier",
+    hasJob ? `Tailor it to the ${a?.job_title || "job"} role` : `Tailor it for ${a?.job_title || "my target"} roles`,
+    "Start every bullet with a strong action verb",
+    "Tighten it to fit one page",
+  ];
+}
+
+function bubble(role, html, extraClass = "") {
+  const el = document.createElement("div");
+  el.className = `msg-bubble ${role} ${extraClass}`;
+  el.innerHTML = html;
+  $("#chat-log").append(el);
+  $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
+  return el;
+}
+
+function renderPreview(flash = false) {
+  const doc = $("#chat-doc"), md = state.chat.md;
+  doc.classList.toggle("plain", !md);
+  doc.innerHTML = md ? markdown(md) : esc(state.resumeText);
+  $("#preview-label").textContent = md ? "Edited resume" : "Your resume (original)";
+  $("#preview-label").classList.toggle("edited", !!md);
+  if (flash) { doc.classList.remove("flash"); void doc.offsetWidth; doc.classList.add("flash"); }
+}
+
+function resetChat() {
+  state.chat = { messages: [], md: "" };
+  $("#chat-log").innerHTML = "";
+  bubble("assistant", "Hi! Tell me what to change — a section, a tone, a fact to add — and I'll update your resume on the right. I'll never invent numbers or experience.");
+  $("#chat-suggest").innerHTML = chatSuggestions().map((t) => `<button type="button">${esc(t)}</button>`).join("");
+  renderPreview();
+}
+
+$("#chat-suggest").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b) { $("#chat-input").value = b.textContent; $("#chat-form").requestSubmit(); }
+});
+$("#chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#chat-form").requestSubmit(); }
+});
+
+$("#chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("#chat-input").value.trim();
+  if (!text || $("#chat-send").disabled) return;
+  $("#chat-input").value = "";
+  $("#chat-send").disabled = true;
+  bubble("user", esc(text));
+  state.chat.messages.push({ role: "user", content: text });
+  const typing = bubble("assistant", "<span></span><span></span><span></span>", "typing");
+  try {
+    const { edit } = await api("/api/resume-chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resume_text: state.resumeText,
+        resume_markdown: state.chat.md,
+        messages: state.chat.messages,
+        job: state.job?.description ? state.job : null,
+        analysis: state.analysis,
+      }),
+    });
+    typing.remove();
+    const items = edit.changes.map((c) => `<li class="${c.startsWith("Please verify") ? "warn" : ""}">${inline(c)}</li>`).join("");
+    bubble("assistant", inline(edit.reply) + (items ? `<ul>${items}</ul>` : ""));
+    state.chat.messages.push({ role: "assistant", content: edit.reply });
+    if (edit.changed) { state.chat.md = edit.resume_markdown; renderPreview(true); }
+  } catch (err) {
+    typing.remove();
+    state.chat.messages.pop();
+    bubble("assistant", esc(err.message), "error");
+    if (err.code === "access_code") needAccessCode();
+  } finally {
+    $("#chat-send").disabled = false;
+    $("#chat-input").focus();
+  }
+});
+
+$("#chat-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(state.chat.md || state.resumeText); toast("Copied"); } catch { toast("Couldn't access the clipboard"); }
+});
+$("#chat-docx").addEventListener("click", () => downloadDocx(state.chat.md || state.resumeText, "edited"));
 
 // ---- Kit ----
 $("#kit-btn").addEventListener("click", async () => {
@@ -401,12 +492,14 @@ document.addEventListener("click", async (e) => {
   try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Couldn't access the clipboard"); }
 });
 
-$("#dl-docx").addEventListener("click", async () => {
-  const name = (state.analysis.candidate_name || "resume") + " - " + (state.analysis.company || state.job.company || "tailored");
+$("#dl-docx").addEventListener("click", () => downloadDocx(state.kit.tailored_resume_markdown, state.analysis.company || state.job.company || "tailored"));
+
+async function downloadDocx(markdownText, suffix) {
+  const name = (state.analysis.candidate_name || "resume") + " - " + suffix;
   const res = await fetch("/api/export/docx", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...accessHeaders() },
-    body: JSON.stringify({ markdown: state.kit.tailored_resume_markdown, filename: name }),
+    body: JSON.stringify({ markdown: markdownText, filename: name }),
   });
   if (!res.ok) return toast("Export failed");
   const a = document.createElement("a");
@@ -414,7 +507,7 @@ $("#dl-docx").addEventListener("click", async () => {
   a.download = name.replace(/[^\w-]+/g, "_") + ".docx";
   a.click();
   URL.revokeObjectURL(a.href);
-});
+}
 
 // ---- Status ----
 // ---- Splash: play the intro once per visit (short on reloads), then fade out ----

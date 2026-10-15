@@ -117,11 +117,11 @@ DEMO_PROFILE = {
     "target_role": "Product Designer",
     "seniority": "mid",
     "hard_skills": ["Figma", "Sketch", "Miro", "prototyping", "user research", "usability testing", "journey mapping", "wireframes", "user flows"],
-    "expected_keywords": [
+    "expected_keywords": [{"term": k, "aliases": []} for k in [
         "Figma", "prototyping", "user research", "usability testing", "design systems", "wireframes",
         "interaction design", "accessibility", "A/B testing", "journey mapping", "information architecture",
         "user flows", "stakeholder management", "design thinking", "cross-functional",
-    ],
+    ]],
     "roles": [
         {"title": "Product Designer", "company": "Brightly", "start": "2021", "end": "present", "bullets": 6},
         {"title": "UX Designer", "company": "Northwind Studio", "start": "2019", "end": "2021", "bullets": 3},
@@ -186,3 +186,5 @@ DEMO_KIT = {
         "Prepare the two case studies referenced in the talking points.",
     ],
 }
+
+DEMO_CHAT_REPLY = "Resume editing needs an AI model, and HireReady isn't connected to one right now — so this is a sample reply and your resume wasn't changed."

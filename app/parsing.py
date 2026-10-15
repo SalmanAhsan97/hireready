@@ -28,9 +28,16 @@ class JobFetchError(Exception):
 
 def extract_resume_text(filename: str, data: bytes) -> str:
     name = filename.lower()
+    links: list[str] = []
     if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(data))
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        # "LinkedIn" / "Portfolio" are often clickable words: the URL lives in the link, not the text
+        for page in reader.pages:
+            for annot in page.get("/Annots") or []:
+                uri = (annot.get_object().get("/A") or {}).get("/URI")
+                if isinstance(uri, str) and uri.startswith("http") and uri not in links and uri not in text:
+                    links.append(uri)
     elif name.endswith(".docx"):
         doc = Document(io.BytesIO(data))
         parts = [p.text for p in doc.paragraphs]
@@ -42,12 +49,43 @@ def extract_resume_text(filename: str, data: bytes) -> str:
         text = data.decode("utf-8", errors="ignore")
     else:
         raise ValueError("Upload a PDF, DOCX or TXT resume.")
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = reflow(text)
+    if links:
+        text += "\nLinks: " + " ".join(links)
     if len(text) < 200:
         raise ValueError(
             "Couldn't read enough text from that resume. If it's a scanned PDF, upload a DOCX or text version."
         )
     return text
+
+
+BULLET = "•▪◦●‣–-*"
+LABEL = re.compile(r"^[A-Z][\w &/]{1,30}:\s")  # "Certifications: ...", "Tools: ..."
+HEADING = re.compile(r"^[A-Z0-9 &/,'’()-]{3,}$")  # ALL-CAPS section headings
+
+
+def reflow(text: str) -> str:
+    """Undo PDF line-wrapping: a lone bullet glyph joins the line after it, and a wrapped bullet or
+    paragraph line joins the line it continues. Headings, new bullets and sentence ends break lines."""
+    out: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            if out and out[-1]:
+                out.append("")
+            continue
+        prev = out[-1] if out else ""
+        if prev in tuple(BULLET):  # glyph alone on the previous line
+            out[-1] = f"{prev} {line}"
+            continue
+        starts_new = line[0] in BULLET or bool(HEADING.match(line)) or not prev or bool(LABEL.match(line))
+        structured = " | " in prev or " • " in prev  # contact / role / education lines never wrap into prose
+        continues = prev and not structured and prev[-1] not in ".!?:" and (prev[0] in BULLET or len(prev) >= 70)
+        if not starts_new and (continues or (prev and prev[0] in BULLET and line[0].islower())):
+            out[-1] = f"{prev} {line}"
+        else:
+            out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
 
 
 def linkedin_job_id(url: str) -> str | None:

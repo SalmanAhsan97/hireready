@@ -93,6 +93,10 @@
 
     <!-- Step 2 -->
     <section id="results" hidden>
+      <div class="demo-banner" id="demo-banner" hidden>
+        <strong>Sample result — this isn't your resume.</strong>
+        HireReady isn't connected to an AI model right now, so it's showing a built-in example. Your upload wasn't analysed.
+      </div>
       <div class="card score-card">
         <div class="ring-wrap">
           <svg viewBox="0 0 120 120" class="ring"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ring-fg"/></svg>
@@ -141,6 +145,33 @@
         <h2>What to change</h2>
         <p class="muted">Ordered by impact. Only use a suggestion if it's true for you — fill any [placeholders] with real numbers.</p>
         <div id="changes"></div>
+      </div>
+
+      <div class="card chat-card" id="chat-card">
+        <div class="chat-head">
+          <div>
+            <h2>Edit your resume with AI</h2>
+            <p class="muted">Ask for changes in plain words. It only uses facts from your resume or what you tell it — anything it can't verify becomes a [placeholder].</p>
+          </div>
+        </div>
+        <div class="chat-grid">
+          <div class="chat-pane">
+            <div class="chat-log" id="chat-log" aria-live="polite"></div>
+            <div class="chat-suggest" id="chat-suggest"></div>
+            <form class="chat-form" id="chat-form">
+              <textarea id="chat-input" rows="2" placeholder="e.g. Make my summary punchier and add that I grew Instagram followers by 300%"></textarea>
+              <button class="btn primary" id="chat-send" type="submit">Send</button>
+            </form>
+          </div>
+          <div class="chat-preview">
+            <div class="panel-actions">
+              <span class="preview-label" id="preview-label">Your resume</span>
+              <button class="btn small" id="chat-docx" type="button">Download .docx</button>
+              <button class="btn ghost small" id="chat-copy" type="button">Copy</button>
+            </div>
+            <article class="doc" id="chat-doc"></article>
+          </div>
+        </div>
       </div>
 
       <div class="card cta">

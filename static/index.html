@@ -223,6 +223,11 @@
           <p class="verdict" id="verdict"></p>
           <p class="cap-note" id="cap-note" hidden></p>
           <p class="cap-note" id="file-warn" hidden></p>
+          <div class="gates" id="gates" hidden>
+            <div class="gates-title">Confirm before applying</div>
+            <ul id="gates-list"></ul>
+            <small>These conditions from the posting can end an application before anyone reads it. They aren't part of your score.</small>
+          </div>
           <div class="actions-row">
             <a class="btn ghost" id="job-link" target="_blank" rel="noopener">View job posting ↗</a>
           </div>
@@ -256,9 +261,31 @@
         <div class="card"><h2>Red flags</h2><ul class="list" id="red-flags"></ul></div>
       </div>
 
+      <div class="card screens" id="screens" hidden>
+        <h2>How each screen sees you</h2>
+        <div class="lens-grid">
+          <div class="lens">
+            <div class="lens-label">Strict ATS <span>Taleo-style · exact words only</span></div>
+            <div class="lens-num" id="lens-strict"></div>
+            <p id="lens-strict-note"></p>
+          </div>
+          <div class="lens">
+            <div class="lens-label">Recruiter &amp; AI ranker <span>Workday-style · variants, evidence, title</span></div>
+            <div class="lens-num" id="lens-semantic"></div>
+            <p id="lens-semantic-note"></p>
+          </div>
+          <div class="lens">
+            <div class="lens-label">7-second skim <span>top third of your resume</span></div>
+            <div class="lens-num" id="lens-skim"></div>
+            <p id="lens-skim-note"></p>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <h2>What to change</h2>
         <p class="muted">Ordered by impact. Only use a suggestion if it's true for you — fill any [placeholders] with real numbers.</p>
+        <div class="projected" id="projected" hidden></div>
         <div id="changes"></div>
       </div>
 

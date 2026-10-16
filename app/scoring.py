@@ -5,7 +5,7 @@ Everything numeric happens here: evidence is checked against the resume text, ke
 literally like an ATS would, and the weighted overall score is computed from those results.
 """
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Iterable, List, Optional
 
@@ -16,6 +16,9 @@ from .models import (
     CompareEntry,
     CompareResult,
     CompareRow,
+    Lenses,
+    Skim,
+    Change,
     Coverage,
     Evidence,
     JobRequirements,
@@ -106,6 +109,139 @@ def quote_found(quote: str, resume_tokens: str, resume_vocab: set) -> bool:
     return True
 
 
+# ---- Dates and experience (computed here: the model doesn't know today's date and can't do date math reliably) ----
+
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+_DATE = rf"(?:{_MONTH}\s*,?\s*|(?:0?[1-9]|1[0-2])\s*[/.-]\s*)?(?:19|20)\d{{2}}"
+DATE_RANGE = re.compile(rf"({_DATE})\s*(?:–|—|-|to|until|till)\s*({_DATE}|present|current|now|today|ongoing)", re.I)
+_MONTHS3 = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
+def _ym(text: str, end: bool, today: date) -> int | None:
+    """Month index (year*12 + month). Year-only dates are taken as mid-year, so "2019–2021" counts as 2 years."""
+    t = text.strip().lower()
+    if re.match(r"present|current|now|today|ongoing", t):
+        return today.year * 12 + today.month
+    y = re.search(r"(?:19|20)\d{2}", t)
+    if not y:
+        return None
+    word = re.match(r"[a-z]{3}", t)
+    num = re.match(r"(\d{1,2})\s*[/.-]", t)
+    month = _MONTHS3.index(word.group()) + 1 if word and word.group() in _MONTHS3 else int(num.group(1)) if num else (6 if end else 7)
+    return int(y.group()) * 12 + month
+
+
+def role_spans(resume: str, today: date | None = None) -> list[dict]:
+    """Every line with a date range: its index, text, start/end month index and whether it's current."""
+    today = today or date.today()
+    spans = []
+    for i, line in enumerate(resume.splitlines()):
+        m = DATE_RANGE.search(line)
+        if not m:
+            continue
+        start, stop = _ym(m.group(1), False, today), _ym(m.group(2), True, today)
+        if start and stop and stop >= start and not re.search(r"\b(education|university|college|school|bachelor|master|degree|ba|bs|msc|bsc)\b", line, re.I):
+            spans.append({"line": i, "text": line.strip(), "start": start, "end": stop,
+                          "current": bool(re.search(r"present|current|now|today|ongoing", m.group(2), re.I))})
+    return spans
+
+
+def experience_years(resume: str, today: date | None = None) -> float | None:
+    """Total years across dated roles, overlaps merged. None if the resume has no dated roles."""
+    spans = sorted((s["start"], s["end"]) for s in role_spans(resume, today))
+    if not spans:
+        return None
+    months, cur_s, cur_e = 0, *spans[0]
+    for s, e in spans[1:]:
+        if s > cur_e + 1:  # back-to-back roles (Jun -> Jul) are continuous
+            months += cur_e - cur_s
+            cur_s, cur_e = s, e
+        else:
+            cur_e = max(cur_e, e)
+    months += cur_e - cur_s
+    return round(months / 12, 1)
+
+
+STALE_MONTHS = 7 * 12  # evidence only from roles that ended this long ago counts as partial
+
+
+def stale_roles(resume: str, today: date | None = None) -> tuple[dict[int, int], str]:
+    """({line index: end year} for lines inside roles that ended 7+ years ago, normalised text of everything else)."""
+    today = today or date.today()
+    lines = resume.splitlines()
+    spans = sorted(role_spans(resume, today), key=lambda s: s["line"])
+    stale: dict[int, int] = {}
+    for i, sp in enumerate(spans):
+        if sp["current"] or today.year * 12 + today.month - sp["end"] < STALE_MONTHS:
+            continue
+        stop = spans[i + 1]["line"] if i + 1 < len(spans) else len(lines)
+        for j in range(sp["line"], stop):
+            if _HEADING.match(lines[j].strip()) and j > sp["line"]:
+                break
+            stale[j] = sp["end"] // 12
+    return stale, _norm("\n".join(l for j, l in enumerate(lines) if j not in stale))
+
+
+def durations_block(resume: str, today: date | None = None) -> str:
+    """Facts handed to the model so it sums durations instead of doing date math itself."""
+    today = today or date.today()
+    spans = role_spans(resume, today)
+    if not spans:
+        return ""
+    lines = "\n".join(f"- {s['text'][:120]} -> {round((s['end'] - s['start']) / 12, 1)} years" for s in spans)
+    return (f"<dates>\nToday is {today:%B %Y}. Durations computed by code from the resume's dates (use these; don't do "
+            f"your own date math):\n{lines}\nTotal, overlaps merged: {experience_years(resume, today)} years\n</dates>")
+
+
+# ---- Resume sections: where a keyword appears matters (experience > skills list > pasted keyword dump) ----
+
+SECTION_NAMES = {
+    "skills": r"(technical |core |key |professional )?(skills|competencies|tools|technologies|tech stack|expertise|areas? of expertise|skills ?(&|and) tools)",
+    "experience": r"(work |professional |relevant )?(experience|employment|work history|career history)",
+    "summary": r"(professional )?(summary|profile|about( me)?|objective)",
+    "education": r"education|academic.*",
+    "projects": r"(selected |key )?projects?",
+    "other": r"certifications?|licen[cs]es?|awards?|honou?rs|volunteer(ing)?|languages|interests|publications|references|achievements",
+}
+_HEADING = re.compile(r"^\W*(" + "|".join(f"(?P<{k}>{v})" for k, v in SECTION_NAMES.items()) + r")\s*:?\s*$", re.I)
+SKILL_LABEL = re.compile(r"^\W*(" + SECTION_NAMES["skills"] + r")\s*[:\-–]", re.I)
+DUMP_LABEL = re.compile(r"^\W*(ats )?(keywords?|key words|tags|search terms)\s*[:\-–]", re.I)
+
+
+def sections(resume: str) -> list[tuple[str, str]]:
+    """(line, section) for every line; text before the first heading is the header/summary area."""
+    out, current = [], "summary"
+    for line in resume.splitlines():
+        m = _HEADING.match(line.strip())
+        if m and len(line.split()) <= 5:
+            current = next(k for k, v in m.groupdict().items() if v)
+            out.append((line, "heading"))
+            continue
+        out.append((line, "skills" if SKILL_LABEL.match(line) else current))
+    return out
+
+
+def keyword_dump_lines(resume: str) -> list[str]:
+    """Lines that only list search terms: labelled "Keywords:" or a 10+ item list outside the skills section."""
+    dumps = []
+    for line, sec in sections(resume):
+        items = [x for x in re.split(r"[,|•;·]", line) if x.strip()]
+        long_list = len(items) >= 10 and all(len(x.split()) <= 4 for x in items)
+        if DUMP_LABEL.match(line) or (long_list and sec not in ("skills", "heading")):
+            dumps.append(line)
+    return dumps
+
+
+def context_and_skills(resume: str) -> tuple[str, str]:
+    """Normalised text of the experience/summary/projects lines and of the skills lines, separately."""
+    context, skills = [], []
+    for line, sec in sections(resume):
+        if sec == "heading" or re.search(r"@|https?://|www\.", line):
+            continue
+        (skills if sec == "skills" else context).append(line)
+    return _norm("\n".join(context)), _norm("\n".join(skills))
+
+
 # ---- Degrees (compared in code, so "Master's" always satisfies "Bachelor's required") ----
 
 DEGREE_PATTERNS = [
@@ -143,7 +279,8 @@ HEADING_LINE = re.compile(r"^[A-Z][A-Z &/]{3,}$")
 
 # ---- Requirement coverage ----
 
-def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_tokens: str, vocab: set, resume_text: str) -> RequirementResult:
+def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_tokens: str, vocab: set, resume_text: str,
+            total_years: float | None = None, stale: tuple[dict[int, int], str] | None = None) -> RequirementResult:
     hits = keyword_hits(req.keywords, resume_norm)
     # another name for the skill still shows it; ATS keyword coverage below stays literal
     aliased = [] if hits else alias_hits(req.keywords, resume_norm)
@@ -158,10 +295,14 @@ def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_t
         need = min(needed)  # "Bachelor's or Master's" -> a bachelor's is the minimum
         status = "met" if have >= need else "partial" if have == need - 1 else "missing"
         note = f"You have {DEGREE_NAMES[have]}; this asks for {DEGREE_NAMES[need]}"
-    elif req.kind == "experience" and req.min_years and ev and ev.years is not None:
-        ratio = ev.years / req.min_years
+    elif req.kind == "experience" and req.min_years and (ev and ev.years is not None or total_years is not None):
+        # the model picks which roles count; the total can never exceed what the dates add up to
+        years = ev.years if ev and ev.years is not None else total_years
+        if total_years is not None:
+            years = min(years, total_years)
+        ratio = years / req.min_years
         status = "met" if ratio >= 1 else "partial" if ratio >= 0.75 else "missing"
-        note = f"{ev.years:g} years (asks for {req.min_years}+)"
+        note = f"{years:g} years (asks for {req.min_years}+)"
     elif claimed == "met":
         status = "met" if verified or hits or aliased else "partial"
         if status == "partial":
@@ -172,6 +313,11 @@ def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_t
         status = "partial" if hits or aliased else "missing"
         if hits or aliased:
             note = "Mentioned, but not shown in your experience"
+    # recency: a skill shown only in a role that ended 7+ years ago is weaker evidence
+    if status == "met" and verified and stale and stale[0] and req.kind in ("skill", "title"):
+        line = _quote_line(quote, resume_text)
+        if line in stale[0] and not keyword_hits(req.keywords, stale[1]):
+            status, note = "partial", f"Only shown in a role that ended in {stale[0][line]}; recruiters weigh recent experience"
     if aliased and not note:
         # exact-match ATS (Taleo, Workday's parser) search the posting's wording literally
         kw, used = aliased[0]
@@ -187,6 +333,18 @@ def _assess(req: Requirement, ev: Optional[Evidence], resume_norm: str, resume_t
         matched_keywords=hits,
         note=note,
     )
+
+
+def _quote_line(quote: str, resume: str) -> int | None:
+    """Index of the resume line the quote comes from (first fragment, token match)."""
+    frag = _tokens(re.split(r"\.\.\.|…", quote)[0])[:8]
+    if not frag:
+        return None
+    want = " ".join(frag)
+    for i, line in enumerate(resume.splitlines()):
+        if want in " ".join(_tokens(line)):
+            return i
+    return None
 
 
 def _weighted_pct(results: List[RequirementResult]) -> Optional[int]:
@@ -251,6 +409,49 @@ def _clarity(resume: str) -> tuple[int, str]:
     return score, ("Missing: " + ", ".join(failed)) if failed else "All structure checks pass"
 
 
+# ---- Job-title alignment (recruiters read titles first; Workday weights title matches heavily) ----
+
+TITLE_SENIORITY = {"senior", "sr", "lead", "principal", "staff", "head", "chief", "director", "manager"}
+TITLE_FILLER = {"junior", "jr", "associate", "intern", "ii", "iii", "iv", "the", "and", "for", "of", "remote", "hybrid"}
+
+
+def title_alignment(job_title: str, resume: str, today: date | None = None) -> dict | None:
+    """Score 100 / 50 / 0 for how well the most recent role (or the headline) names the posting's title."""
+    words = _norm(job_title).split()
+    core = [w for w in words if len(w) > 1 and w not in TITLE_SENIORITY | TITLE_FILLER]
+    if not core:
+        return None
+    spans = sorted(role_spans(resume, today), key=lambda s: (s["end"], s["start"]), reverse=True)
+    recent = _norm(re.sub(DATE_RANGE, " ", spans[0]["text"])) if spans else ""
+    head = _norm(" ".join(resume.splitlines()[:6]))
+    has = lambda text: sum(w in text.split() for w in core)
+    if recent and has(recent) == len(core):
+        score, where = 100, "your most recent title"
+    elif has(head) == len(core) or (recent and has(recent)):
+        score, where = 50, "your headline" if has(head) == len(core) else "partly in your most recent title"
+    else:
+        score, where = 0, ""
+    level = [w for w in words if w in TITLE_SENIORITY - {"manager"}]
+    if score == 100:
+        note = f"Your most recent title matches \u201c{job_title}\u201d"
+    elif score:
+        note = f"\u201c{job_title}\u201d appears only in your headline" if where == "your headline" else f"Your most recent title partly matches \u201c{job_title}\u201d"
+    else:
+        note = f"Your recent titles and headline don't name \u201c{job_title}\u201d"
+    if score and level and not any(w in (recent + " " + head).split() for w in level):
+        score, note = min(score, 50), note + f", but not the {level[0].title()} level it asks for"
+    return {"score": score, "note": note}
+
+
+def _with_title(part: tuple[int | None, str], title: dict | None) -> tuple[int | None, str]:
+    pct, detail = part
+    if not title:
+        return part
+    if pct is None:
+        return title["score"], title["note"]
+    return round(0.7 * pct + 0.3 * title["score"]), f"{detail}. {title['note']}"
+
+
 # ---- Scorecard ----
 
 @dataclass
@@ -262,25 +463,38 @@ class Scorecard:
     coverage: Optional[Coverage]
     matched_keywords: List[str]
     missing_keywords: List[str]
+    gates: List[str] = field(default_factory=list)  # eligibility to confirm before applying (never scored)
+    lenses: Optional[Lenses] = None
+    skim: Optional[Skim] = None
 
 
-def compute(resume: str, job: JobRequirements, resume_ev: ResumeEvidence) -> Scorecard:
+def compute(resume: str, job: JobRequirements, resume_ev: ResumeEvidence, today: date | None = None) -> Scorecard:
     resume_norm = _norm(resume)
     toks = _tokens(resume)
     resume_tokens, vocab = f" {' '.join(toks)} ", set(toks)
     by_id = {e.id: e for e in resume_ev.evidence}
     reqs = sorted(job.requirements, key=lambda r: r.importance != "must")  # musts first, posting order kept
-    results = [_assess(r, by_id.get(r.id), resume_norm, resume_tokens, vocab, resume) for r in reqs]
+    total_years = experience_years(resume, today)
+    stale = stale_roles(resume, today)
+    results = [_assess(r, by_id.get(r.id), resume_norm, resume_tokens, vocab, resume, total_years, stale) for r in reqs]
 
-    with_kw = [r for r, req in zip(results, reqs) if req.keywords]
-    kw_total = sum(IMPORTANCE[r.importance] for r in with_kw)
-    kw_pct = round(100 * sum(IMPORTANCE[r.importance] for r in with_kw if r.matched_keywords) / kw_total) if kw_total else 100
-    kw_found = sum(bool(r.matched_keywords) for r in with_kw)
+    # ATS coverage: full credit for a term used in your experience or summary, half for one only in a skills list
+    context_norm, skills_norm = context_and_skills(resume)
+    with_kw = [(r, req) for r, req in zip(results, reqs) if req.keywords]
+    credit = {r.id: 1.0 if keyword_hits(req.keywords, context_norm) else 0.5 if keyword_hits(req.keywords, skills_norm) else 0.0
+              for r, req in with_kw}
+    kw_total = sum(IMPORTANCE[r.importance] for r, _ in with_kw)
+    kw_pct = round(100 * sum(IMPORTANCE[r.importance] * credit[r.id] for r, _ in with_kw) / kw_total) if kw_total else 100
+    kw_found = sum(c == 1.0 for c in credit.values())
+    kw_skills_only = sum(c == 0.5 for c in credit.values())
+    kw_detail = f"{kw_found} of {len(with_kw)} requirements found word-for-word in your experience" + (
+        f", {kw_skills_only} only in your skills list (half credit)" if kw_skills_only else "")
+    title = title_alignment(job.job_title, resume, today)
 
     parts = {
         "Hard skills & tools": _requirement_category(results, {"skill"}, "No specific skills listed in the posting"),
-        "Relevant experience & seniority": _requirement_category(results, {"experience", "title"}, "No experience requirements listed"),
-        "ATS keyword coverage": (kw_pct, f"{kw_found} of {len(with_kw)} requirements found word-for-word"),
+        "Relevant experience & seniority": _with_title(_requirement_category(results, {"experience", "title"}, "No experience requirements listed"), title),
+        "ATS keyword coverage": (kw_pct, kw_detail),
         "Impact & quantified results": _impact(resume),
         "Education & certifications": _requirement_category(results, {"education", "certification"}, "No education or certification required"),
         "Clarity & formatting": _clarity(resume),
@@ -326,7 +540,63 @@ def compute(resume: str, job: JobRequirements, resume_ev: ResumeEvidence) -> Sco
         if not r.matched_keywords and literal_gap and req.keywords and req.keywords[0] not in missing:
             missing.append(req.keywords[0])
 
-    return Scorecard(overall, standing_for(overall), categories, results, coverage, matched[:20], missing[:15])
+    strict = [r for r, req in zip(results, reqs) if req.keywords]
+    lenses = Lenses(
+        strict_found=sum(bool(r.matched_keywords) for r in strict), strict_total=len(strict),
+        semantic_pct=round(100 * sum(CREDIT[r.status] for r in results) / len(results)) if results else 0,
+        semantic_total=len(results),
+        title_score=title["score"] if title else None, title_note=title["note"] if title else "",
+    )
+    return Scorecard(overall, standing_for(overall), categories, results, coverage, matched[:20], missing[:15], list(job.gates),
+                     lenses, skim_check(resume, job.job_title, [req for req in reqs if req.importance == "must" and req.keywords][:3]))
+
+
+def skim_check(resume: str, job_title: str, top_musts: list) -> Skim:
+    """Recruiters skim for ~7 seconds, titles first: does the top third name the role and the top must-haves?"""
+    lines = [l for l in resume.splitlines() if l.strip()]
+    top = _norm("\n".join(lines[:max(8, len(lines) // 3)]))
+    # the level counts here too: a skim for "Senior Product Designer" looks for "Senior"
+    core = [w for w in _norm(job_title).split() if len(w) > 1 and w not in TITLE_FILLER | {"manager"} or w == "manager"]
+    title_shown = bool(core) and all(w in top.split() for w in core)
+    shown, missing = [], []
+    for req in top_musts:
+        (shown if keyword_hits([*req.keywords, *(v for k in req.keywords for v in variants(k))], top) else missing).append(req.keywords[0])
+    bits = [f"{'names' if title_shown else 'does not name'} the {job_title or 'target'} title"] if core else []
+    if top_musts:
+        bits.append(f"shows {len(shown)} of the top {len(top_musts)} must-haves")
+    verdict = "In a 7-second skim, the top of your resume " + " and ".join(bits) + "." if bits else ""
+    return Skim(title_shown=title_shown, terms_shown=shown, terms_missing=missing, verdict=verdict)
+
+
+# ---- What each suggested edit is worth (scoring is deterministic, so re-score the edited resume) ----
+
+def apply_edit(resume: str, change: Change) -> str | None:
+    """The resume with one edit applied: replace the quoted line, or add the suggestion if nothing is quoted."""
+    current, suggested = change.current.strip(), change.suggested.strip()
+    if not suggested:
+        return None
+    if not current:
+        return resume.rstrip() + "\n" + suggested + "\n"
+    want = " ".join(_tokens(current))
+    lines = resume.splitlines()
+    for i, line in enumerate(lines):
+        if want and want in " ".join(_tokens(line)):
+            bullet = re.match(r"^\s*[-*•▪◦●‣–]\s*", line)
+            lines[i] = (bullet.group() if bullet else "") + re.sub(r"^\s*[-*•▪◦●‣–]\s*", "", suggested)
+            return "\n".join(lines)
+    return None
+
+
+def edit_gains(resume: str, changes: list[Change], rescore, base: int) -> tuple[list[Change], int | None]:
+    """Each change with its own gain, plus the score with all of them applied in order."""
+    out, combined = [], resume
+    for c in changes:
+        edited = apply_edit(resume, c)
+        gain = max(0, rescore(edited) - base) if edited is not None else None
+        out.append(c.model_copy(update={"gain": gain}))
+        combined = apply_edit(combined, c) or combined
+    projected = rescore(combined) if combined != resume else None
+    return out, (max(base, projected) if projected is not None else None)
 
 
 def assemble(card: Scorecard, narrative: Narrative, candidate_name: str, job_title: str, company: str) -> Analysis:
@@ -348,6 +618,9 @@ def assemble(card: Scorecard, narrative: Narrative, candidate_name: str, job_tit
         changes=narrative.changes,
         requirements=card.requirements,
         coverage=card.coverage,
+        gates=card.gates,
+        lenses=card.lenses,
+        skim=card.skim,
     )
 
 

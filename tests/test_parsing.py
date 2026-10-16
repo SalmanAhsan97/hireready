@@ -46,3 +46,33 @@ def test_scanned_pages_ocr_layer_is_kept():
     ocr = b"".join(b"BT 3 Tr /F1 11 Tf 72 %d Td (Scanned resume line with enough words to read clearly) Tj ET\n" % (760 - 14 * i) for i in range(12))
     text, warnings = extract_resume("cv.pdf", make_pdf(ocr))
     assert "Scanned resume line" in text and warnings == []
+
+
+def test_keyword_dump_is_stripped_and_reported():
+    from app import demo
+    text, warnings = extract_resume("cv.txt", (demo.DEMO_RESUME + "\nKeywords: Figma, WCAG, Storybook, design tokens\n").encode())
+    assert "Keywords:" not in text and "WCAG" not in text
+    assert warnings and "keyword list" in warnings[0]
+
+
+def test_two_column_pdf_is_flagged():
+    left = b"".join(b"BT /F1 10 Tf 40 %d Td (Left column sentence about product design work number %d) Tj ET\n" % (700 - 20 * i, i) for i in range(6))
+    right = b"".join(b"BT /F1 10 Tf 330 %d Td (Right column sentence about skills and tools list item %d) Tj ET\n" % (700 - 20 * i, i) for i in range(6))
+    _, warnings = extract_resume("cv.pdf", make_pdf(left + right))
+    assert any("side-by-side columns" in w for w in warnings)
+    _, single = extract_resume("cv.pdf", make_pdf(left))
+    assert not any("columns" in w for w in single)
+
+
+def test_docx_header_contact_is_read_and_flagged():
+    import io
+    from docx import Document
+    from app import demo
+    doc = Document()
+    doc.sections[0].header.paragraphs[0].text = "Jane Doe · jane@example.com · +1 416 555 0134"
+    for line in demo.DEMO_RESUME.splitlines()[2:]:
+        doc.add_paragraph(line)
+    buf = io.BytesIO(); doc.save(buf)
+    text, warnings = extract_resume("cv.docx", buf.getvalue())
+    assert "jane@example.com" in text
+    assert any("header or footer" in w for w in warnings)

@@ -152,7 +152,27 @@ async def remember_run(request: Request, resume_name: str, resume_text: str, job
 
 @app.get("/api/history", dependencies=[Depends(require_admin)])
 async def history():
-    return {"items": await cache.list_history()}
+    items = await cache.list_history()
+    # score trend per job: every run against the same job, oldest first, up to and including this one
+    runs: dict[str, list] = {}
+    for it in sorted(items, key=lambda i: i["last_used"] or ""):
+        job_key = it.get("job_url") or f"{it.get('mode')}|{it.get('job_title')}|{it.get('company')}"
+        runs.setdefault(job_key, []).append(it.get("overall_score"))
+        it["trend"] = list(runs[job_key])
+    return {"items": items}
+
+
+class Outcome(BaseModel):
+    outcome: str
+
+
+@app.post("/api/history/{key}/outcome", dependencies=[Depends(require_admin)])
+async def history_outcome(key: str, body: Outcome):
+    if not re.fullmatch(r"[0-9a-f]{32}", key) or body.outcome not in cache.OUTCOMES:
+        raise HTTPException(400, "Unknown run or outcome.")
+    if not await cache.set_history_outcome(key, body.outcome):
+        raise HTTPException(404, "That saved run is gone.")
+    return {"ok": True}
 
 
 @app.get("/api/history/{key}", dependencies=[Depends(require_admin)])
@@ -367,6 +387,7 @@ class JobSearchRequest(BaseModel):
     role: str
     location: str = ""
     country: str = "USA"
+    skills: list[str] = []  # skills the resume already shows; postings are sorted by how many of them they ask for
 
 
 @app.post("/api/jobs", dependencies=[Depends(require_access)])
@@ -381,7 +402,7 @@ async def find_jobs(req: JobSearchRequest, request: Request):
         found = await jobs.search(req.role, req.location, req.country)
     except jobs.JobSearchError as e:
         raise HTTPException(502, str(e))
-    return {"jobs": found}
+    return {"jobs": jobs.rank_by_fit(found, req.skills)}
 
 
 class ChatRequest(BaseModel):

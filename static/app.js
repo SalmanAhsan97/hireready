@@ -493,6 +493,10 @@ function renderAnalysis() {
   const warn = $("#file-warn"), warnings = a.warnings || [];
   warn.hidden = !warnings.length;
   warn.textContent = warnings.join(" ");
+  const gates = a.gates || [];
+  $("#gates").hidden = !gates.length;
+  $("#gates-list").innerHTML = gates.map((g) => `<li>${esc(g)}</li>`).join("");
+  renderScreens(a);
   const link = $("#job-link");
   link.hidden = !job.url; link.href = job.url || "#";
   link.textContent = a.mode === "linkedin" ? "View profile ↗" : "View job posting ↗";
@@ -528,7 +532,7 @@ function renderAnalysis() {
     ? lockBox(`${plural(L.changes, "more edit")} ranked by impact`, "Ready-to-paste rewrites for your resume, highest impact first.", true) : "";
   $("#changes").innerHTML = a.changes.map((c, i) => `
     <div class="change">
-      <div class="change-head"><span class="prio ${c.priority}">${c.priority}</span><span class="change-section">${esc(c.section)}</span></div>
+      <div class="change-head"><span class="prio ${c.priority}">${c.priority}</span><span class="change-section">${esc(c.section)}</span>${c.gain ? `<span class="gain">+${c.gain} pts</span>` : ""}</div>
       <div class="change-issue">${esc(c.issue)}</div>
       <div class="diff">
         ${c.current ? `<div class="old">${esc(c.current)}</div>` : ""}
@@ -536,6 +540,12 @@ function renderAnalysis() {
       </div>
       <p class="why">${esc(c.why)}</p>
     </div>`).join("") + lockedEdits;
+
+  const proj = $("#projected"), gainTotal = a.projected_score != null && a.projected_score > a.overall_score;
+  proj.hidden = !gainTotal || a.mode === "linkedin";
+  if (gainTotal) proj.innerHTML = `<span>Apply ${state.preview ? "every edit in the full report" : "these edits"}:</span>
+    <strong>${a.overall_score}</strong><span class="arrow">→</span><strong>${a.projected_score}</strong>
+    <span class="muted">re-scored in code, same engine as your score</span>`;
 
   // chat + kit are full-version features
   $("#chat-grid").hidden = state.preview;
@@ -588,6 +598,21 @@ function renderRequirements(a) {
   $("#requirements").innerHTML = lockedReqs
     ? lockBox(`${plural(lockedReqs, "requirement")} checked one by one`, "See exactly which ones you meet, with the matching lines quoted from your resume.", true)
     : group("must", "Must-have") + group("nice", "Nice-to-have");
+}
+
+// ---- How each screen sees you: strict ATS, recruiter/AI ranker, 7-second skim ----
+function renderScreens(a) {
+  const L = a.lenses, K = a.skim;
+  $("#screens").hidden = !L;
+  if (!L) return;
+  $("#lens-strict").innerHTML = `${L.strict_found}<small> of ${L.strict_total} terms</small>`;
+  $("#lens-strict-note").textContent = "Requirements whose exact posting wording appears in your resume. Literal search misses abbreviations and variants.";
+  $("#lens-semantic").innerHTML = `${L.semantic_pct}<small>%</small>`;
+  $("#lens-semantic-note").textContent = `Of ${L.semantic_total} requirements met or partly met, counting variants and evidence. ${L.title_note ? L.title_note + "." : ""}`;
+  const shown = (K.terms_shown || []).length, total = shown + (K.terms_missing || []).length;
+  $("#lens-skim").innerHTML = `${(K.title_shown ? 1 : 0) + shown}<small> of ${1 + total} signals</small>`;
+  $("#lens-skim-note").innerHTML = esc(K.verdict) + ((K.terms_missing || []).length
+    ? `<span class="chips">${K.terms_missing.map((t) => `<span class="chip miss">${esc(t)}</span>`).join("")}</span>` : "");
 }
 
 // ---- Resume chat ----
@@ -691,7 +716,7 @@ $("#jobs-btn").addEventListener("click", async () => {
     const data = await api("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role: state.analysis.job_title, location, country }),
+      body: JSON.stringify({ role: state.analysis.job_title, location, country, skills: state.analysis.matched_keywords || [] }),
     });
     state.jobs = data.jobs;
     list.innerHTML = data.jobs.length ? data.jobs.map((j, i) => `
@@ -699,6 +724,7 @@ $("#jobs-btn").addEventListener("click", async () => {
         <div>
           <div class="job-title">${esc(j.title)}</div>
           <small>${esc([j.company, j.location, j.remote ? "Remote" : "", j.date_posted].filter(Boolean).join(" · "))}</small>
+          ${(j.fit || []).length ? `<span class="job-fit">Asks for ${j.fit.length} of your skills: ${esc(j.fit.slice(0, 4).join(", "))}${j.fit.length > 4 ? "…" : ""}</span>` : ""}
         </div>
         <div class="job-actions">
           <a class="btn ghost small" href="${esc(j.url)}" target="_blank" rel="noopener">View ↗</a>
@@ -862,12 +888,16 @@ const when = (iso) => {
 const runTarget = (h) => h.mode === "resume" ? `General resume score${h.job_title ? " · best fit: " + h.job_title : ""}`
   : h.mode === "linkedin" ? `LinkedIn review · ${h.job_title || "profile"}`
   : [h.job_title, h.company].filter(Boolean).join(" · ") || h.job_url || "Job match";
+const OUTCOMES = [["interview", "Interview"], ["offer", "Offer"], ["rejected", "Rejected"], ["no_reply", "No reply"]];
 const runRow = (h) => `
   <span class="h-score">${esc(String(h.overall_score ?? "–"))}</span>
   <div class="h-main">
     <div class="h-name">${esc(h.resume_name || "Resume")}</div>
     <div class="h-target">${esc(runTarget(h))}</div>
     <div class="h-date">Last used ${esc(when(h.last_used))}</div>
+    ${(h.trend || []).length > 1 ? `<div class="h-trend">This job: ${h.trend.map((v, i, arr) => i === arr.length - 1 ? `<b>${v}</b>` : v).join(" → ")}</div>` : ""}
+    <div class="h-outcome" data-key="${esc(h.key)}"><span>After applying:</span>${OUTCOMES.map(([k, label]) =>
+      `<button type="button" data-outcome="${k}" class="${h.outcome === k ? "on" : ""}">${label}</button>`).join("")}</div>
   </div>
   <button type="button" class="btn ghost small" data-preview="${esc(h.key)}">Preview</button>`;
 
@@ -884,6 +914,17 @@ async function loadHistory() {
 }
 
 $("#history").addEventListener("click", async (e) => {
+  const out = e.target.closest("[data-outcome]");
+  if (out) {
+    const row = out.closest(".h-outcome");
+    try {
+      await api(`/api/history/${row.dataset.key}/outcome`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: out.dataset.outcome }) });
+      row.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === out));
+      toast("Saved. Thanks, this helps calibrate the scores");
+    } catch (err) { toast(err.message); }
+    return;
+  }
   const key = e.target.closest("[data-preview]")?.dataset.preview;
   if (!key) return;
   try {

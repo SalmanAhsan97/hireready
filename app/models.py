@@ -32,6 +32,7 @@ class JobRequirements(BaseModel):
     job_title: str
     company: str
     requirements: List[Requirement]
+    gates: List[str] = []  # hard eligibility conditions a resume can't prove (work authorisation, onsite, clearance...)
 
 
 class Evidence(BaseModel):
@@ -75,6 +76,7 @@ class Change(BaseModel):
     current: str
     suggested: str
     why: str
+    gain: Optional[int] = None  # points this edit adds, computed in code by re-scoring the edited resume
 
 
 class Narrative(BaseModel):
@@ -250,6 +252,24 @@ class Coverage(BaseModel):
     cap_reason: str = ""
 
 
+class Lenses(BaseModel):
+    """The same resume through two kinds of screen."""
+    strict_found: int  # requirements whose exact posting term appears (Taleo-style literal search)
+    strict_total: int
+    semantic_pct: int  # requirements met (1) or partly met (0.5), variants and evidence allowed (Workday-style)
+    semantic_total: int
+    title_score: Optional[int] = None
+    title_note: str = ""
+
+
+class Skim(BaseModel):
+    """What a recruiter sees in the top third of the resume in a ~7-second skim."""
+    title_shown: bool
+    terms_shown: List[str]
+    terms_missing: List[str]
+    verdict: str
+
+
 class Analysis(BaseModel):
     candidate_name: str
     job_title: str
@@ -268,6 +288,10 @@ class Analysis(BaseModel):
     coverage: Optional[Coverage] = None
     mode: Literal["job", "resume", "linkedin"] = "job"  # "resume" = no job posting; "linkedin" = profile review
     warnings: List[str] = []  # problems with the uploaded file itself (e.g. hidden text), found in code
+    gates: List[str] = []  # eligibility conditions from the posting to confirm before applying (not scored)
+    lenses: Optional[Lenses] = None
+    skim: Optional[Skim] = None
+    projected_score: Optional[int] = None  # score with every suggested edit applied, computed in code
 
 
 class CompareEntry(BaseModel):

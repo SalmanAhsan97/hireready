@@ -98,20 +98,25 @@ REQUIREMENTS_RULES = """Requirements (job side):
 level, education, certifications. 10-25 items.
 - ONE skill, tool or method per requirement. Split lists: "paid ads, SEO, email and social media" is four \
 requirements ("Paid ads", "SEO", "Email marketing", "Social media marketing"), each with its own keywords.
+- Don't split one tool into its features: "Expert in Figma, including auto layout and variables" is ONE requirement \
+("Expert in Figma") whose keywords may include the features. Don't list the same skill twice.
 - importance "must" = stated as required / must / minimum / essential, or plainly core to the role. \
 "nice" = preferred, bonus, plus, nice-to-have, familiarity with.
 - keywords: 1-4 short literal terms an ATS would search for, most canonical first, including common \
 variants (e.g. ["Kubernetes", "k8s"]). Empty for requirements with no searchable term.
 - min_years: the number for experience requirements ("5+ years" -> 5), otherwise null.
-- ids: "r1", "r2", ... in posting order."""
+- ids: "r1", "r2", ... in posting order.
+- gates: hard eligibility conditions the posting states that a resume can't prove, as short phrases \
+(e.g. "Authorised to work in Canada", "Onsite in Toronto 3 days a week", "Secret clearance", "Valid driver's licence", \
+"Willing to travel 30%"). Not skills or experience. Empty list if none."""
 
 EVIDENCE_RULES = """Evidence (resume side), one entry per requirement id:
 - status "met" = the resume clearly demonstrates it; "partial" = related or weaker evidence \
 (adjacent tool, fewer years, mentioned without context); "missing" = nothing relevant.
 - quote: copy the single most relevant line from the resume EXACTLY as written (it is checked verbatim). \
 "" when missing.
-- years: for experience requirements, the candidate's total years in that area computed from the resume's \
-dates (null if not an experience requirement).
+- years: for experience requirements, the candidate's years in that area: add up the code-computed durations \
+in <dates> for the roles that count (null if not an experience requirement). Never do your own date math.
 - Be strict and literal. Don't infer skills the resume doesn't show."""
 
 EXTRACT_INSTRUCTIONS = f"""Extract the facts used to score this resume against the job. Do not score anything.
@@ -236,7 +241,7 @@ def _job_block(job: Job) -> str:
 
 # ---- Extraction cache ----
 
-EXTRACT_VERSION = "2"  # bump when the extraction prompts change, to invalidate cached facts
+EXTRACT_VERSION = "3"  # bump when the extraction prompts change, to invalidate cached facts
 
 
 def _key(*parts: str) -> str:
@@ -246,6 +251,7 @@ def _key(*parts: str) -> str:
 async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidence]:
     """Requirements are fixed once per job; evidence once per job+resume. Both are cached."""
     block = _job_block(job)
+    dates = scoring.durations_block(resume)
     job_key, pair_key = _key(block), _key(block, resume)
     reqs = await cache.get("jobs", job_key, JobRequirements)
     evidence = await cache.get("evidence", pair_key, ResumeEvidence)
@@ -254,7 +260,7 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
     if reqs:
         evidence = await _evidence(block, reqs, resume)
     else:
-        content = f"{block}\n\n<resume>\n{resume}\n</resume>\n\n{EXTRACT_INSTRUCTIONS}"
+        content = f"{block}\n\n<resume>\n{resume}\n</resume>\n\n{dates}\n\n{EXTRACT_INSTRUCTIONS}"
         both = await _parse(content, Extraction, effort="medium")
         reqs, evidence = both.job, both.resume
         await cache.put("jobs", job_key, reqs)
@@ -265,7 +271,7 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
 async def _evidence(block: str, reqs: JobRequirements, resume: str) -> ResumeEvidence:
     content = (
         f"{block}\n\n<requirements>\n{reqs.model_dump_json(indent=1)}\n</requirements>\n\n"
-        f"<resume>\n{resume}\n</resume>\n\n{EVIDENCE_INSTRUCTIONS}"
+        f"<resume>\n{resume}\n</resume>\n\n{scoring.durations_block(resume)}\n\n{EVIDENCE_INSTRUCTIONS}"
     )
     return await _parse(content, ResumeEvidence, effort="medium")
 
@@ -313,7 +319,7 @@ def _inline_refs(schema: dict) -> dict:
     return walk(schema)
 
 
-async def _gemini_parse(content: str, schema, effort: str, models: list[str] | None = None):
+async def _gemini_parse(content: str, schema, effort: str, models: list[str] | None = None, writing: bool = False):
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM}]},
         "contents": [{"role": "user", "parts": [{"text": content}]}],
@@ -322,6 +328,8 @@ async def _gemini_parse(content: str, schema, effort: str, models: list[str] | N
             "responseJsonSchema": _inline_refs(schema.model_json_schema()),
             "maxOutputTokens": 32768,
             "thinkingConfig": {"thinkingLevel": "high" if effort == "high" else "low"},
+            # facts that feed a score are read at temperature 0 so the first read of a job is as stable as possible
+            **({} if writing else {"temperature": 0}),
         },
     }
     headers = {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}
@@ -388,12 +396,12 @@ async def _parse(content: str, schema, effort: str, writing: bool = False):
     if route:
         try:
             if route == "gemini":
-                return await _gemini_parse(content, schema, "high", models=[PREMIUM_MODEL])
+                return await _gemini_parse(content, schema, "high", models=[PREMIUM_MODEL], writing=True)
             return await _anthropic_parse(content, schema, effort, PREMIUM_MODEL)
         except AIError:
             pass  # the paid model being busy shouldn't fail the request: fall back to the standard one
     if provider() == "gemini":
-        return await _gemini_parse(content, schema, effort)
+        return await _gemini_parse(content, schema, effort, writing=writing)
     return await _anthropic_parse(content, schema, effort, MODEL)
 
 
@@ -459,13 +467,15 @@ async def analyze(resume: str, job: Job) -> Analysis:
         )
         narrative = await _parse(content, Narrative, effort="medium", writing=True)
 
-    return scoring.assemble(
+    analysis = scoring.assemble(
         card,
         narrative,
         candidate_name=evidence.candidate_name,
         job_title=reqs.job_title or job.title,
         company=reqs.company or job.company,
     )
+    changes, projected = scoring.edit_gains(resume, analysis.changes, lambda t: scoring.compute(t, reqs, evidence).overall, card.overall)
+    return analysis.model_copy(update={"changes": changes, "projected_score": projected})
 
 
 async def role_keywords(role: str, seniority: str) -> list:
@@ -507,7 +517,9 @@ async def analyze_resume(resume: str) -> Analysis:
         )
         narrative = await _parse(content, ResumeNarrative, effort="medium", writing=True)
 
-    return scoring.assemble_resume(card, narrative, profile)
+    analysis = scoring.assemble_resume(card, narrative, profile)
+    changes, projected = scoring.edit_gains(resume, analysis.changes, lambda t: scoring.compute_resume(t, profile).overall, card.overall)
+    return analysis.model_copy(update={"changes": changes, "projected_score": projected})
 
 
 async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage], job: Job | None, analysis: Analysis | None) -> ResumeEdit:

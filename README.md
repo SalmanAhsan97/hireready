@@ -112,12 +112,19 @@ Full plan details, cost drivers and rollout: [docs/monetization.md](docs/monetiz
 
 The free tier gets the best scoring the current stack can do. No accuracy is held back for upselling:
 
-- **Deterministic:** the model extracts facts once (cached by content hash), and Python scores them with fixed weights.
+- **Deterministic:** the model extracts facts once, at temperature 0 (cached by content hash), and Python scores them with fixed weights.
+- **Dates done in code:** years of experience are computed from the resume's dates (the model doesn't know today's date), and the model's figure can never exceed them.
 - **Evidence-checked:** quotes the model cites must actually appear in the resume, and claims without support are downgraded.
-- **ATS-realistic keywords:** literal matching with plurals, word proximity and a curated synonym map, while flagging terms that strict ATS would miss.
+- **ATS-realistic keywords:** literal matching with plurals, word proximity and a curated synonym map, while flagging terms that strict ATS would miss. A term used in your experience earns full credit, one only in a skills list earns half, and a pasted keyword list earns nothing (it's removed and flagged).
+- **What recruiters weigh:** the posting's job title is checked against your most recent title and level, and skills shown only in roles that ended 7+ years ago count as partial.
 - **Fair gaps:** categories the posting doesn't ask for, and profile fields a source can't see, are left out rather than scored as zero.
 - **Honest caps:** missing must-haves cap the score.
 - **Tamper-resistant:** hidden PDF text is removed before scoring.
+- **Parse checks:** two-column PDFs, scanned pages, contact details in a Word header and table-heavy layouts are flagged, since many ATS misread them.
+- **Knockouts surfaced:** eligibility conditions in the posting (work authorisation, onsite, clearance, licence) are listed to confirm before applying, never scored.
+- **Explained three ways:** a strict-ATS view (exact words), a recruiter/AI-ranker view (variants, evidence, title) and a 7-second skim of the top of the resume.
+- **Edits with a number:** each suggested edit is applied to a copy of the resume and re-scored, so it shows the points it adds, plus the score with every edit applied.
+- **Calibration data:** saved runs record the outcome after applying (interview, offer, rejected, no reply) to tune the fit bands against real results.
 - **Best data available:** job postings are merged from Bright Data and Apify, with LinkedIn's public page as a fallback, and profiles come from Apify or the LinkedIn PDF export.
 - **Resilient:** model calls retry with backoff and fall back to a lighter model with its own quota.
 

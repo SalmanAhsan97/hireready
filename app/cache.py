@@ -115,7 +115,8 @@ async def save_analysis(row: dict):
 # ---- Owner history (admin runs only: resume text is stored for the owner's own runs, never visitors') ----
 
 HISTORY = "history"
-HISTORY_FIELDS = ("resume_name", "mode", "job_title", "company", "job_url", "overall_score", "standing")
+HISTORY_FIELDS = ("resume_name", "mode", "job_title", "company", "job_url", "overall_score", "standing", "outcome")
+OUTCOMES = ("interview", "offer", "rejected", "no_reply")
 
 
 async def save_history(key: str, value: dict):
@@ -176,6 +177,30 @@ async def get_history(key: str) -> dict | None:
         return json.loads((CACHE_DIR / HISTORY / f"{key}.json").read_text())
     except (OSError, ValueError):
         return None
+
+
+async def set_history_outcome(key: str, outcome: str) -> bool:
+    """Record what happened after applying (calibration data). Doesn't change the run's "last used" time."""
+    item = await get_history(key)
+    if item is None:
+        return False
+    item.update(outcome=outcome, outcome_at=datetime.now(timezone.utc).isoformat())
+    if supabase_enabled():
+        try:
+            resp = await _sb().patch("/hireready_cache", params={"kind": f"eq.{HISTORY}", "key": f"eq.{key}"},
+                                     headers={"Prefer": "return=minimal"}, json={"value": item})
+            resp.raise_for_status()
+            return True
+        except httpx.HTTPError as e:
+            log.warning("Saving outcome to Supabase failed, using disk: %r", e)
+    path = CACHE_DIR / HISTORY / f"{key}.json"
+    try:
+        stat = path.stat()
+        path.write_text(json.dumps(item))
+        os.utime(path, (stat.st_atime, stat.st_mtime))
+        return True
+    except OSError:
+        return False
 
 
 # ---- Usage (daily limit) ----

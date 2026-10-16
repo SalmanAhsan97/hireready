@@ -153,3 +153,27 @@ def test_identical_resumes_are_a_tie_and_compare_needs_two(monkeypatch):
 def test_compare_is_a_paid_feature(access_code):
     r = client.post("/api/compare", data={"job_text": "x"}, files=[_resume_file("a.txt"), _resume_file("b.txt")])
     assert r.status_code == 401
+
+
+def test_outcomes_and_score_trend_per_job(admin, monkeypatch, tmp_path):
+    from app import cache
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    admin.post("/api/admin/login", json={"username": "owner", "password": "test-pass"})
+    job = {"job_text": "Senior Product Designer at Acme Cloud"}
+    admin.post("/api/analyze", files={"resume": ("v1.txt", demo.DEMO_RESUME.encode(), "text/plain")}, data=job)
+    admin.post("/api/analyze", files={"resume": ("v2.txt", (demo.DEMO_RESUME + "\nAccessibility (WCAG 2.2 AA) audits").encode(), "text/plain")}, data=job)
+    items = admin.get("/api/history").json()["items"]
+    newest = items[0]
+    assert newest["resume_name"] == "v2.txt" and len(newest["trend"]) == 2
+    assert admin.post(f"/api/history/{newest['key']}/outcome", json={"outcome": "interview"}).status_code == 200
+    assert admin.post(f"/api/history/{newest['key']}/outcome", json={"outcome": "maybe"}).status_code == 400
+    again = admin.get("/api/history").json()["items"]
+    assert again[0]["outcome"] == "interview" and again[0]["key"] == newest["key"]  # last-used order unchanged
+
+
+def test_job_suggestions_are_sorted_by_fit():
+    from app import jobs
+    a = jobs.Posting(title="Designer", url="https://x/1", site="indeed", description="Sketch and Miro")
+    b = jobs.Posting(title="Product Designer", url="https://x/2", site="indeed", description="Figma, user research, usability testing")
+    ranked = jobs.rank_by_fit([a, b], ["Figma", "user research", "usability testing", "Sketch"])
+    assert [p.url for p in ranked] == ["https://x/2", "https://x/1"] and ranked[0].fit == ["Figma", "user research", "usability testing"]

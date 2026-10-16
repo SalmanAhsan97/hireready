@@ -5,11 +5,12 @@ from app.models import RoleKeywords
 
 
 def _run(monkeypatch, paid: bool, writing: bool, premium_fails: bool = False) -> list[str]:
-    calls = []
+    calls, modes = [], []
 
-    async def fake_gemini(content, schema, effort, models=None):
+    async def fake_gemini(content, schema, effort, models=None, writing=False):
         model = (models or [ai.GEMINI_MODEL])[0]
         calls.append(model)
+        modes.append(writing)
         if premium_fails and model == "gemini-pro-latest":
             raise ai.AIError("busy")
         return RoleKeywords(keywords=[])
@@ -23,6 +24,7 @@ def _run(monkeypatch, paid: bool, writing: bool, premium_fails: bool = False) ->
         await ai._parse("x", RoleKeywords, effort="low", writing=writing)
 
     asyncio.run(go())
+    _run.modes = modes
     return calls
 
 
@@ -33,6 +35,7 @@ def test_paid_writing_uses_the_premium_model(monkeypatch):
 def test_extraction_uses_the_standard_model_on_every_plan(monkeypatch):
     # facts that feed the score come from the same model for everyone, so scores don't depend on the plan
     assert _run(monkeypatch, paid=True, writing=False) == [ai.GEMINI_MODEL]
+    assert _run.modes == [False]  # facts are read at temperature 0
     assert _run(monkeypatch, paid=False, writing=True) == [ai.GEMINI_MODEL]
 
 

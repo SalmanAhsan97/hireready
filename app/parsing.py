@@ -45,7 +45,7 @@ def _is_white(args) -> bool:
 def _page_text(page) -> tuple[str, list[str]]:
     """Visible text of a page plus the hidden fragments that were dropped from it."""
     state = {"white": False, "mode": 0, "size": 12.0}
-    stack, pending, dark_panel, rect = [], [], [False], [0.0]
+    stack, pending, dark_panel, rect, runs = [], [], [False], [0.0], []
     chunks: list[tuple[str, str]] = []  # (text, why hidden or "")
 
     def before(op, args, cm, tm):
@@ -77,6 +77,10 @@ def _page_text(page) -> tuple[str, list[str]]:
             why = pending[-1]
         pending.clear()
         chunks.append((text, why))
+        if not why and len(text.strip()) >= 30:  # sentence-length runs, for spotting multi-column layouts
+            x = cm[0] * tm[4] + cm[2] * tm[5] + cm[4]
+            y = cm[1] * tm[4] + cm[3] * tm[5] + cm[5]
+            runs.append((x, y))
 
     page.extract_text(visitor_operand_before=before, visitor_text=visit)
     hidden = [(t, w) for t, w in chunks if w and t.strip()]
@@ -88,7 +92,26 @@ def _page_text(page) -> tuple[str, list[str]]:
         hidden = [(t, w) for t, w in hidden if w != "invisible"]  # a scanned page's OCR layer, not a trick
     for t, _ in hidden:
         full = full.replace(t.strip(), "", 1)
-    return full, [t.strip() for t, _ in hidden]
+    return full, [t.strip() for t, _ in hidden], {"two_column": _two_columns(runs, float(page.mediabox.width)),
+                                                    "scanned": not full.strip() and _has_images(page)}
+
+
+def _two_columns(runs: list[tuple[float, float]], width: float) -> bool:
+    """Sentence-length text starting in both halves of the page at overlapping heights = side-by-side columns,
+    which many ATS parsers read across, mixing the two."""
+    left = [y for x, y in runs if x < width * 0.38]
+    right = [y for x, y in runs if x > width * 0.45]
+    if len(left) < 4 or len(right) < 4:
+        return False
+    overlap = min(max(left), max(right)) - max(min(left), min(right))
+    return overlap > 0.25 * (max(left + right) - min(left + right))
+
+
+def _has_images(page) -> bool:
+    try:
+        return bool(page.images)
+    except Exception:
+        return False
 
 
 def extract_resume_text(filename: str, data: bytes) -> str:
@@ -102,12 +125,20 @@ def extract_resume(filename: str, data: bytes) -> tuple[str, list[str]]:
     warnings: list[str] = []
     if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(data))
-        pages, hidden = [], []
+        pages, hidden, layouts = [], [], []
         for page in reader.pages:
-            text, dropped = _page_text(page)
+            text, dropped, layout = _page_text(page)
             pages.append(text)
             hidden += dropped
+            layouts.append(layout)
         text = "\n".join(pages)
+        if any(l["two_column"] for l in layouts):
+            warnings.append("Your PDF uses side-by-side columns. Many ATS read straight across the page and mix the "
+                            "columns together; a single-column layout parses reliably.")
+        scanned = sum(l["scanned"] for l in layouts)
+        if scanned and scanned < len(layouts):
+            warnings.append(f"{scanned} page{'s' * (scanned > 1)} of your PDF {'are' if scanned > 1 else 'is'} an image "
+                            "with no readable text, so an ATS can't read it. Export the resume as text, not a scan.")
         if hidden:
             words = sum(len(h.split()) for h in hidden)
             sample = " ".join(" ".join(hidden).split()[:12])
@@ -123,16 +154,38 @@ def extract_resume(filename: str, data: bytes) -> tuple[str, list[str]]:
                     links.append(uri)
     elif name.endswith(".docx"):
         doc = Document(io.BytesIO(data))
+        # header/footer text isn't in doc.paragraphs; read it too (linked sections repeat it, so de-duplicate)
+        header = list(dict.fromkeys(p.text for sec in doc.sections for part in (sec.header, sec.footer)
+                                    for p in part.paragraphs if p.text.strip()))
         parts = [p.text for p in doc.paragraphs]
+        table_text = []
         for table in doc.tables:
             for row in table.rows:
-                parts.append(" | ".join(cell.text for cell in row.cells))
-        text = "\n".join(parts)
+                table_text.append(" | ".join(dict.fromkeys(cell.text for cell in row.cells)))
+        if any(re.search(r"@|\+?\d[\d\s().-]{7,}\d", h) for h in header):
+            warnings.append("Your contact details are in the Word header or footer. Some ATS skip headers, so they may "
+                            "not see your email or phone; move them into the body of the page.")
+        body_words = sum(len(p.split()) for p in parts)
+        table_words = sum(len(t.split()) for t in table_text)
+        if table_words > 0.3 * (body_words + table_words):
+            warnings.append("Most of your resume sits inside tables. Some ATS skip or scramble table cells; use plain "
+                            "paragraphs and bullets instead.")
+        text = "\n".join(header + parts + table_text)
     elif name.endswith((".txt", ".md")):
         text = data.decode("utf-8", errors="ignore")
     else:
         raise ValueError("Upload a PDF, DOCX or TXT resume.")
     text = reflow(text)
+    from .scoring import keyword_dump_lines
+    dumps = keyword_dump_lines(text)
+    if dumps:
+        lines = text.splitlines()
+        for d in dumps:
+            lines.remove(d)
+        text = "\n".join(lines)
+        sample = " ".join(dumps[0].split()[:10])
+        warnings.append(f"A keyword list (\"{sample}…\") was left out of the score. Recruiters read a pasted list of "
+                        "search terms as stuffing; show those skills in your experience bullets instead.")
     if links:
         text += "\nLinks: " + " ".join(links)
     if len(text) < 200:

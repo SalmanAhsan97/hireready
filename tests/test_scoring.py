@@ -183,3 +183,88 @@ def test_ambiguous_short_forms_are_not_synonyms():
     from app.synonyms import variants
     assert "k8s" in variants("Kubernetes") and "Kubernetes".lower() in [v.lower() for v in variants("k8s")]
     assert variants("Golang") == ["go lang"]  # bare "go" would match ordinary English
+
+
+def test_experience_years_are_computed_from_dates_not_guessed():
+    today = scoring.date(2026, 10, 1)
+    resume = "Product Designer — Brightly (2021–present)\nUX Designer — Northwind (2019–2021)\nBA — OCAD University (2015–2019)"
+    assert scoring.experience_years(resume, today) == 7.2  # mid-2019 to Oct 2026, the degree isn't a role
+    assert "Today is October 2026" in scoring.durations_block(resume, today)
+    job = JobRequirements(job_title="Designer", company="X", requirements=[
+        Requirement(id="r1", kind="experience", text="5+ years of design", importance="must", keywords=[], min_years=5),
+        Requirement(id="r2", kind="experience", text="10+ years of design", importance="nice", keywords=[], min_years=10),
+    ])
+    # the model under-counts (no idea what today is) for r1 and over-counts for r2: code fixes both
+    ev = ResumeEvidence(candidate_name="X", evidence=[Evidence(id="r1", status="partial", quote="", years=4.5),
+                                                      Evidence(id="r2", status="met", quote="", years=12)])
+    r1, r2 = sorted(scoring.compute(resume, job, ev, today).requirements, key=lambda r: r.id)
+    assert r2.status == "missing" and "7.2 years" in r2.note  # capped at what the dates add up to
+    assert r1.status == "partial" and "4.5 years" in r1.note  # the model's pick of relevant roles is kept when lower
+
+
+def test_month_dates_and_overlaps():
+    today = scoring.date(2026, 10, 1)
+    resume = "Lead, Acme — Jan 2020 - Present\nFreelance — 03/2021 to 06/2022\nAnalyst, Beta — Mar 2016 – Dec 2018"
+    assert scoring.experience_years(resume, today) == 9.5  # 2y9m + 6y9m, the freelance overlap counted once
+
+
+def test_keyword_dump_is_detected_but_skills_section_is_not():
+    resume = demo.DEMO_RESUME + "\nKeywords: Figma, WCAG, design system, Storybook, design tokens\n"
+    assert scoring.keyword_dump_lines(resume) == ["Keywords: Figma, WCAG, design system, Storybook, design tokens"]
+    assert scoring.keyword_dump_lines(demo.DEMO_RESUME) == []  # the real Skills section stays
+    long_list = "Summary\nDesigner.\n" + ", ".join(f"term{i}" for i in range(12)) + "\nSkills\n" + ", ".join(f"s{i}" for i in range(12))
+    assert scoring.keyword_dump_lines(long_list) == [", ".join(f"term{i}" for i in range(12))]
+
+
+def test_keywords_only_in_the_skills_list_get_half_credit():
+    job = JobRequirements(job_title="Designer", company="Acme", requirements=[
+        Requirement(id="r1", kind="skill", text="Sketch", importance="must", keywords=["Sketch"], min_years=None),
+        Requirement(id="r2", kind="skill", text="Usability testing", importance="must", keywords=["usability testing"], min_years=None),
+    ])
+    ev = ResumeEvidence(candidate_name="X", evidence=[Evidence(id="r1", status="partial", quote="", years=None),
+                                                      Evidence(id="r2", status="met", quote="", years=None)])
+    ats = next(c for c in scoring.compute(demo.DEMO_RESUME, job, ev).categories if c.name == "ATS keyword coverage")
+    assert ats.score == 75  # usability testing in a bullet (full), Sketch only in Skills (half)
+    assert "1 only in your skills list" in ats.detail
+
+
+def test_title_alignment_checks_recent_title_and_seniority():
+    today = scoring.date(2026, 10, 1)
+    t = scoring.title_alignment("Senior Product Designer", demo.DEMO_RESUME, today)
+    assert t["score"] == 50 and "not the Senior level" in t["note"]  # title matches, level doesn't
+    assert scoring.title_alignment("Product Designer", demo.DEMO_RESUME, today)["score"] == 100
+    assert scoring.title_alignment("Data Engineer", demo.DEMO_RESUME, today)["score"] == 0
+
+
+def test_skills_shown_only_in_an_old_role_count_as_partial():
+    today = scoring.date(2026, 10, 1)
+    resume = ("Experience\nProduct Designer — Brightly (2021–present)\n- Ran usability testing with 12 customers\n"
+              "Web Developer — Oldco (2010–2016)\n- Built Flash microsites for 30 clients\n")
+    job = JobRequirements(job_title="Designer", company="X", requirements=[
+        Requirement(id="r1", kind="skill", text="Flash", importance="nice", keywords=["Flash"], min_years=None),
+        Requirement(id="r2", kind="skill", text="Usability testing", importance="must", keywords=["usability testing"], min_years=None),
+    ], gates=["Authorised to work in Canada"])
+    ev = ResumeEvidence(candidate_name="X", evidence=[
+        Evidence(id="r1", status="met", quote="Built Flash microsites for 30 clients", years=None),
+        Evidence(id="r2", status="met", quote="Ran usability testing with 12 customers", years=None)])
+    card = scoring.compute(resume, job, ev, today)
+    by = {r.id: r for r in card.requirements}
+    assert by["r1"].status == "partial" and "ended in 2016" in by["r1"].note
+    assert by["r2"].status == "met"
+    assert card.gates == ["Authorised to work in Canada"]
+
+
+def test_edit_gains_lenses_and_skim():
+    job, ev = demo_extraction()
+    card = scoring.compute(demo.DEMO_RESUME, job, ev)
+    assert card.lenses.strict_total == sum(bool(r.keywords) for r in job.requirements)
+    assert not card.skim.title_shown and "does not name" in card.skim.verdict  # "Senior" isn't at the top
+    from app.models import Change
+    add_wcag = Change(priority="high", section="Experience", issue="", why="",
+                      current="Worked on UI components for the web app.",
+                      suggested="Built and documented the Figma design system and component library to WCAG 2.2 AA.")
+    missing_line = Change(priority="low", section="Summary", issue="", why="", current="Not in the resume at all", suggested="x")
+    changes, projected = scoring.edit_gains(demo.DEMO_RESUME, [add_wcag, missing_line],
+                                            lambda t: scoring.compute(t, job, ev).overall, card.overall)
+    assert changes[0].gain > 0 and changes[1].gain is None
+    assert projected >= card.overall + changes[0].gain

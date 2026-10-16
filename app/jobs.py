@@ -32,6 +32,7 @@ class JobSearchError(Exception):
 
 class Posting(BaseModel):
     title: str
+    fit: list[str] = []  # the resume's skills this posting mentions (filled by rank_by_fit)
     company: str = ""
     location: str = ""
     date_posted: str = ""
@@ -106,3 +107,17 @@ async def search(role: str, location: str = "", country: str = "USA", limit: int
     if jobs:  # never cache an empty result: it may be a silent block rather than no jobs
         await cache.put("job-search", key, Postings(jobs=jobs))
     return jobs
+
+
+def rank_by_fit(postings: list, skills: list[str]) -> list:
+    """Most relevant first: postings that ask for more of the skills the resume already shows. Stable for ties."""
+    if not skills:
+        return postings
+    from .scoring import _norm, keyword_hits
+    from .synonyms import variants
+    ranked = []
+    for p in postings:
+        text = _norm(f"{p.title} {p.description}")
+        fit = [k for k in skills if keyword_hits([k, *variants(k)], text)]
+        ranked.append(p.model_copy(update={"fit": fit}))
+    return sorted(ranked, key=lambda p: -len(p.fit))

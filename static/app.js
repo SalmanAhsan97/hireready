@@ -41,6 +41,31 @@ function toast(msg) {
   toast.timer = setTimeout(() => (t.hidden = true), 1800);
 }
 
+// Headline types itself out once the splash lifts: sentence by sentence, with a pause between.
+const headline = $("#headline");
+if (headline && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  const text = headline.textContent;
+  headline.innerHTML = [...text].map((c) => `<span class="tw-char" aria-hidden="true">${esc(c)}</span>`).join("");
+}
+function typeHeadline() {
+  const chars = headline ? [...headline.querySelectorAll(".tw-char")] : [];
+  if (!chars.length) return;
+  const caret = document.createElement("span");
+  caret.className = "tw-caret";
+  caret.setAttribute("aria-hidden", "true");
+  let n = 0;
+  const tick = () => {
+    const c = chars[n++];
+    c.classList.add("on");
+    c.after(caret);
+    if (n === chars.length) { caret.classList.add("done"); return; }
+    const pause = /[.!?]/.test(c.textContent) ? 520 : c.textContent === " " ? 45 : 38 + Math.random() * 40;
+    setTimeout(tick, pause);
+  };
+  headline.prepend(caret);
+  setTimeout(tick, 250);
+}
+
 // Hero bulletin: rotate the headlines; pause on hover/focus; dots jump to one.
 (() => {
   const items = $$(".bulletin-items li"), dots = $(".bulletin-dots");
@@ -815,6 +840,7 @@ async function downloadResume(markdownText, suffix, format) {
   const hide = () => setTimeout(() => {
     splash.classList.add("out");
     setTimeout(() => splash.remove(), 500);
+    setTimeout(typeHeadline, 350);
   }, Math.max(0, minMs - (performance.now() - t0)));
   document.readyState === "complete" ? hide() : addEventListener("load", hide, { once: true });
 })();

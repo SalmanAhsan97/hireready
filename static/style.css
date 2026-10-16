@@ -512,3 +512,12 @@ textarea { resize: vertical; }
 .bulletin-dots button { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 99px; background: var(--border); cursor: pointer; transition: width .3s ease, background .3s ease; }
 .bulletin-dots button.on { width: 18px; background: var(--accent); }
 @media (max-width: 600px) { .bulletin { flex-wrap: wrap; } .bulletin-items { flex-basis: 100%; order: 3; } .bulletin-dots { margin-left: auto; } }
+
+/* headline typewriter: every letter is laid out from the start (no layout shift), revealed one by one */
+.tw-char { visibility: hidden; }
+.tw-char.on { visibility: visible; }
+.tw-caret { display: inline-block; width: 3px; height: .95em; margin-left: 2px; vertical-align: -.1em; border-radius: 2px;
+  background: var(--accent); animation: caretBlink 1s steps(1) infinite; }
+.tw-caret.done { animation: caretBlink 1s steps(1) 3, caretOut .4s 3s forwards; }
+@keyframes caretBlink { 50% { opacity: 0; } }
+@keyframes caretOut { to { opacity: 0; width: 0; margin-left: 0; } }

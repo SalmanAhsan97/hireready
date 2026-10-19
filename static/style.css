@@ -583,3 +583,29 @@ textarea { resize: vertical; }
 .writing-flags { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
 .wf-title { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
 .writing-flags ul { margin: 0; padding-left: 18px; font-size: 14px; }
+
+/* LinkedIn discoverability */
+#discover > .card { margin-bottom: 16px; }
+.smap-row { display: grid; grid-template-columns: minmax(0, 1.4fr) 70px minmax(0, 1fr) 80px; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.smap-row .kind, .evid .kind { font-size: 12px; color: var(--muted); }
+.smap-bar { height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.smap-bar > div { height: 100%; background: var(--accent); }
+.tag { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); justify-self: start; }
+.tag.essential, .tag.proven, .tag.high { background: var(--good-soft); color: var(--good); }
+.tag.missing, .tag.none { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+.tag.claimed, .tag.low { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.evid, .searches { list-style: none; padding: 0; margin: 0; }
+.evid > li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.evid .places { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.searches > li { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.searches .s-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.searches code { display: block; margin: 6px 0; font-size: 13px; overflow-wrap: anywhere; color: var(--muted); }
+.searches ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.rewrite { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.rewrite .head { font-weight: 600; margin-bottom: 6px; }
+.rewrite .pa { font-size: 13px; color: var(--muted); margin: 4px 0; }
+.rewrite .warn { font-size: 13px; color: var(--warn); margin: 6px 0 0; }
+#appear-text { width: 100%; margin-bottom: 8px; }
+#appear-out .chips { margin: 6px 0 10px; }
+#smap > p.muted { margin-top: 10px; }
+@media (max-width: 600px) { .smap-row { grid-template-columns: minmax(0, 1fr) 60px; } .smap-row .smap-bar, .smap-row .share { display: none; } }

@@ -117,6 +117,10 @@
           <input type="text" id="target_role" placeholder="e.g. Marketing Manager — leave empty to use your current title">
           <small class="hint">We check your profile against what recruiters search for in this role.</small>
 
+          <label class="field-label" for="li_country">Where you're job hunting</label>
+          <select id="li_country"><option value="">From my profile's location</option></select>
+          <small class="hint">We read recent postings there to see which terms recruiters actually ask for.</small>
+
           <details id="li-pdf-box">
             <summary>Or upload your LinkedIn PDF</summary>
             <input type="file" id="profile_pdf" accept=".pdf">
@@ -254,6 +258,43 @@
           <div class="chips" id="kw-matched"></div>
           <h3 class="sub bad" id="kw-miss-title">Missing from your resume</h3>
           <div class="chips" id="kw-missing"></div>
+        </div>
+      </div>
+
+      <div id="discover" hidden>
+        <div class="card">
+          <h2>What recruiters search for</h2>
+          <p class="muted" id="smap-note"></p>
+          <div class="smap" id="smap"></div>
+        </div>
+        <div class="card">
+          <h2>Where your profile proves it</h2>
+          <p class="muted">Recruiters trust a skill your experience shows more than one only listed in Skills or the headline.</p>
+          <ul class="evid" id="evidence"></ul>
+        </div>
+        <div class="card">
+          <h2>Would recruiters find you?</h2>
+          <p class="muted">Five searches a recruiter would run for this role, matched against your profile word for word. Headline and current title count most.</p>
+          <ul class="searches" id="searches"></ul>
+        </div>
+        <div class="card" id="rewrites-card">
+          <h2>Headline and About opening</h2>
+          <p class="muted">Three versions built only from what's on your profile. Pick one, or mix.</p>
+          <div id="top-half"></div>
+          <h3 class="sub">Experience, as problem → action → result</h3>
+          <div id="exp-rewrites"></div>
+          <div id="proof-q" hidden>
+            <h3 class="sub">Can you prove these?</h3>
+            <p class="muted">Postings ask for these, but your experience doesn't show them. Add them only if they're true.</p>
+            <ul class="list" id="proof-list"></ul>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Compare with LinkedIn's Search appearances</h2>
+          <p class="muted">On LinkedIn: your profile → <strong>Analytics</strong> → <strong>Search appearances</strong> → "Job titles your searchers have". Paste them here, one per line.</p>
+          <textarea id="appear-text" rows="4" placeholder="Graphic Designer&#10;UX Designer&#10;Web Designer"></textarea>
+          <button class="btn ghost" id="appear-btn" type="button">Compare</button>
+          <div id="appear-out"></div>
         </div>
       </div>
 

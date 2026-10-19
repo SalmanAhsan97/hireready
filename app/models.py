@@ -209,6 +209,28 @@ class ProfileCategoryRationale(BaseModel):
     rationale: str
 
 
+class TopHalf(BaseModel):
+    headline: str  # under 220 characters
+    about_opening: str  # the first 2-3 lines of About, what shows before "see more"
+    warnings: List[str] = []  # filled in code: clichés, figures or skills the profile doesn't show
+
+
+class ExperienceRewrite(BaseModel):
+    company: str
+    title: str
+    problem: str
+    action: str
+    result: str  # a [placeholder] when the profile has no number for it
+    skill: str  # the search-map skill this entry proves
+    text: str  # ready-to-paste description combining the four
+    warnings: List[str] = []  # filled in code
+
+
+class ProofQuestion(BaseModel):
+    term: str
+    question: str
+
+
 class ProfileNarrative(BaseModel):
     verdict: str
     rationales: List[ProfileCategoryRationale]
@@ -216,6 +238,78 @@ class ProfileNarrative(BaseModel):
     gaps: List[str]
     red_flags: List[str]
     changes: List[Change]
+    top_half: List[TopHalf] = []  # 3 headline + About-opening versions
+    experience_rewrites: List[ExperienceRewrite] = []
+    proof_questions: List[ProofQuestion] = []  # questions for terms the profile claims or lacks, never invented answers
+
+
+# ---- LinkedIn discoverability (search map from real postings; everything counted in code) ----
+
+class PostingFacts(BaseModel):
+    """What one posting asks for, as the model read it. Code does all the counting."""
+    index: int  # the posting's number in the prompt
+    title: str  # the posting's title in its common searchable form, without seniority or location
+    industry: str  # the employer's industry in 1-3 words, "" if unclear
+    skills: List[str]  # methods and domain skills, short canonical spelling
+    tools: List[str]  # named software, platforms, languages
+    outcomes: List[str]  # results the role is measured on, 2-4 words each ("pipeline growth")
+
+
+class PostingsFacts(BaseModel):
+    postings: List[PostingFacts]
+
+
+TermKind = Literal["title", "skill", "tool", "outcome", "industry"]
+
+
+class SearchTerm(BaseModel):
+    term: str
+    kind: TermKind
+    aliases: List[str] = []
+    count: int = 0  # postings that ask for it
+    share: int = 0  # percent of postings
+    label: Literal["essential", "useful", "noise", "expected"]  # expected = estimated without postings
+
+
+class SearchMap(BaseModel):
+    role: str
+    country: str = ""
+    postings: int = 0  # how many real postings the map is built from; 0 = estimated keyword list
+    terms: List[SearchTerm] = []
+
+
+class EvidenceRow(BaseModel):
+    term: str
+    kind: TermKind
+    label: str
+    places: List[str]  # Headline / Current title / About / Experience — <company> / Skills
+    status: Literal["proven", "claimed", "missing"]  # proven = experience text backs it
+
+
+class SearchCheck(BaseModel):
+    name: str
+    query: str
+    appears: bool
+    strength: Literal["high", "low", "none"]
+    reasons: List[str]
+
+
+class Discoverability(BaseModel):
+    search_map: SearchMap
+    evidence: List[EvidenceRow] = []
+    searches: List[SearchCheck] = []
+    target_titles: List[str] = []
+    top_half: List[TopHalf] = []
+    experience_rewrites: List[ExperienceRewrite] = []
+    proof_questions: List[ProofQuestion] = []
+
+
+class AppearanceCheck(BaseModel):
+    on_target: List[str]
+    partial: List[str]
+    off_target: List[str]
+    missing_targets: List[str]
+    summary: str
 
 
 # ---- What the API returns ----
@@ -304,6 +398,7 @@ class Analysis(BaseModel):
     projected_score: Optional[int] = None  # score with every suggested edit applied, computed in code
     assessment: Optional[Assessment] = None
     writing_flags: List[str] = []  # clichés, repeated metrics, repeated work-authorisation lines (advisory, not scored)
+    discover: Optional[Discoverability] = None  # LinkedIn mode: search map, evidence, recruiter searches, rewrites
 
 
 class CompareEntry(BaseModel):

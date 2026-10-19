@@ -284,11 +284,12 @@ async function submitLinkedIn() {
   const fd = new FormData();
   fd.append("profile_url", url);
   fd.append("target_role", $("#target_role").value.trim());
+  fd.append("country", $("#li_country").value);
   if (pdf) fd.append("profile_pdf", pdf);
   $("#analyze-btn").disabled = true;
   $("#results").hidden = $("#kit").hidden = true;
   $("#input-card").after($("#loading"));
-  const stages = [...(pdf ? ["Uploading your LinkedIn PDF"] : []), "Reading your LinkedIn profile", "Checking what recruiters search for", "Scoring your profile", "Writing your rewrites"];
+  const stages = [...(pdf ? ["Uploading your LinkedIn PDF"] : []), "Reading your LinkedIn profile", "Reading recent postings for your role", "Running recruiter searches", "Scoring your profile", "Writing your rewrites"];
   loader.start(stages, 45, { upload: !!pdf });
   let ok = false;
   try {
@@ -522,6 +523,7 @@ function renderAnalysis() {
   requestAnimationFrame(() => $$(".bar > div").forEach((b) => (b.style.width = b.dataset.w + "%")));
 
   renderRequirements(a);
+  renderDiscover(a);
   resetChat();
 
   $("#kw-matched").innerHTML = a.matched_keywords.map((k) => `<span class="chip">${esc(k)}</span>`).join("") || "<small>None found</small>";
@@ -574,6 +576,76 @@ function renderAnalysis() {
 
   $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// ---- LinkedIn discoverability: everything here was computed in code, except the rewrites (checked in code) ----
+const EVID = { proven: "Proven in experience", claimed: "Only claimed", missing: "Missing" };
+const STRENGTH = { high: "Appears, ranks well", low: "Appears, ranks low", none: "Doesn't appear" };
+
+function renderDiscover(a) {
+  const d = a.discover, box = $("#discover");
+  box.hidden = !d;
+  if (!d) return;
+  const m = d.search_map, real = m.postings > 0;
+  $("#smap-note").textContent = real
+    ? `Based on ${m.postings} recent postings for ${m.role}${m.country ? " in " + m.country : ""}. Essential = at least half the postings ask for it; useful = 20–50%.`
+    : `We couldn't read recent postings just now, so this is an estimated keyword list for ${m.role}, not counted from real postings.`;
+  const shown = m.terms.filter((t) => t.label !== "noise"), noise = m.terms.length - shown.length;
+  $("#smap").innerHTML = shown.map((t) => `<div class="smap-row">
+      <span>${esc(t.term)} <span class="kind">${esc(t.kind)}</span></span>
+      <span class="share">${real ? t.share + "%" : ""}</span>
+      <div class="smap-bar">${real ? `<div style="width:${t.share}%"></div>` : ""}</div>
+      <span class="tag ${t.label}">${t.label}</span>
+    </div>`).join("") + (noise ? `<p class="muted">${plural(noise, "rarer term")} (under 20% of postings) left out.</p>` : "");
+  $("#evidence").innerHTML = d.evidence.map((e) => `<li>
+      <strong>${esc(e.term)}</strong><span class="tag ${e.label}">${e.label}</span><span class="tag ${e.status}">${EVID[e.status]}</span>
+      <span class="places">${e.places.length ? "On your profile: " + e.places.map(esc).join(" · ") : "Not on your profile"}</span>
+    </li>`).join("") || "<li>No skills to map.</li>";
+  $("#searches").innerHTML = d.searches.map((c) => `<li>
+      <div class="s-head"><strong>${esc(c.name)}</strong><span class="tag ${c.strength}">${c.appears ? "✓" : "✕"} ${STRENGTH[c.strength]}</span></div>
+      <code>${esc(c.query)}</code>
+      <ul>${c.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+    </li>`).join("") || "<li>Not enough search terms to build searches.</li>";
+  const warns = (w) => (w || []).map((x) => `<p class="warn">⚠ ${esc(x)}</p>`).join("");
+  const copyBtn = (text) => `<button class="btn ghost small copy-text" data-copy="${esc(text)}">Copy</button>`;
+  const lockedRewrites = state.preview && state.locked?.rewrites;
+  $("#top-half").innerHTML = lockedRewrites
+    ? lockBox("3 headline and About versions, plus experience rewrites", "Written from your profile's facts, checked in code for buzzwords and invented numbers.", true)
+    : d.top_half.map((t, i) => `<div class="rewrite">
+      <div class="head">Version ${i + 1}</div>
+      <div>${esc(t.headline)} ${copyBtn(t.headline)}</div>
+      <p class="pa">${esc(t.about_opening)} ${copyBtn(t.about_opening)}</p>${warns(t.warnings)}
+    </div>`).join("");
+  $("#exp-rewrites").innerHTML = lockedRewrites ? "" : d.experience_rewrites.map((x) => `<div class="rewrite">
+      <div class="head">${esc(x.title)} — ${esc(x.company)} <span class="tag">proves ${esc(x.skill)}</span></div>
+      <p class="pa"><strong>Problem</strong> ${esc(x.problem)}<br><strong>Action</strong> ${esc(x.action)}<br><strong>Result</strong> ${esc(x.result)}</p>
+      <div>${inline(x.text)} ${copyBtn(x.text)}</div>${warns(x.warnings)}
+    </div>`).join("") || (lockedRewrites ? "" : "<p class='muted'>No roles with enough detail to rewrite.</p>");
+  $("#proof-q").hidden = !d.proof_questions.length;
+  $("#proof-list").innerHTML = d.proof_questions.map((q) => `<li><strong>${esc(q.term)}:</strong> ${esc(q.question)}</li>`).join("");
+  $("#appear-out").innerHTML = "";
+  state.targetTitles = d.target_titles;
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".copy-text");
+  if (!b) return;
+  navigator.clipboard?.writeText(b.dataset.copy).then(() => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200); });
+});
+
+$("#appear-btn").addEventListener("click", async () => {
+  const pasted = $("#appear-text").value.trim(), out = $("#appear-out");
+  if (!pasted) { out.innerHTML = "<p class='muted'>Paste the job titles first.</p>"; return; }
+  try {
+    const r = await api("/api/linkedin/appearances", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pasted, targets: state.targetTitles || [] }) });
+    const chips = (xs) => xs.map((x) => `<span class="chip">${esc(x)}</span>`).join("") || "<small>None</small>";
+    out.innerHTML = `<p><strong>${esc(r.summary)}</strong></p>
+      <h3 class="sub good">Match your target</h3><div class="chips">${chips(r.on_target)}</div>
+      ${r.partial.length ? `<h3 class="sub">Close</h3><div class="chips">${chips(r.partial)}</div>` : ""}
+      <h3 class="sub bad">Off target</h3><div class="chips">${chips(r.off_target)}</div>
+      ${r.missing_targets.length ? `<h3 class="sub bad">Targets you're not found for</h3><div class="chips">${chips(r.missing_targets)}</div>` : ""}`;
+  } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+});
 
 const STATUS = { met: ["✓", "Met"], partial: ["◐", "Partly"], missing: ["✕", "Missing"] };
 
@@ -1034,6 +1106,7 @@ api("/api/status").then((s) => {
   if (s.contact_email) state.contact = s.contact_email;
   const saved = store.get("screenproof_jobs_country");
   $("#jobs_country").innerHTML = (s.job_countries || []).map((c) => `<option ${c === saved ? "selected" : ""}>${esc(c)}</option>`).join("");
+  $("#li_country").insertAdjacentHTML("beforeend", (s.job_countries || []).map((c) => `<option>${esc(c)}</option>`).join(""));
   $$(".contact-link").forEach((l) => { l.textContent = state.contact; l.href = mailto(); });
   $$(".contact-btn").forEach((l) => (l.href = mailto()));
 }).catch(() => {});

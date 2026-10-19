@@ -188,3 +188,85 @@ DEMO_KIT = {
 }
 
 DEMO_CHAT_REPLY = "Resume editing needs an AI model, and Screenproof isn't connected to one right now — so this is a sample reply and your resume wasn't changed."
+
+# LinkedIn review demo: a profile, eight short postings and the model's reading of them. The search map,
+# evidence map, recruiter searches and score are all computed from these by the real code.
+DEMO_LI_PROFILE = {
+    "name": "Demo Candidate",
+    "headline": "Product Designer at Brightly | Figma, prototyping and usability testing for SaaS",
+    "about": "I design web products for SaaS teams. At Brightly I run usability testing with 12 customers each quarter "
+             "and turn what we learn into prototypes the team can ship. Before that I designed dashboards and marketing "
+             "sites for small business clients at Northwind Studio.",
+    "location": "Toronto, Ontario, Canada",
+    "experiences": [
+        {"title": "Product Designer", "company": "Brightly", "start": "Mar 2021", "end": "Present",
+         "description": "Led usability testing for the onboarding redesign with 12 customers each quarter. Built "
+                        "high-fidelity prototypes in Figma for every major release. Ran user research interviews and "
+                        "journey mapping workshops with product and engineering."},
+        {"title": "UX Designer", "company": "Northwind Studio", "start": "Jun 2019", "end": "Feb 2021",
+         "description": "Designed responsive marketing sites and dashboards. Created wireframes and user flows for client sign-off."},
+    ],
+    "skills": ["Figma", "Prototyping", "User Research", "Usability Testing", "Design Systems"],
+    "skills_total": 14, "certifications": 0, "recommendations": 1, "education": 1, "connections": 420,
+    "has_photo": True, "has_banner": False, "has_featured": False, "custom_url": True,
+    "source": "Demo profile", "open_to_work": None, "has_contact": True,
+}
+
+DEMO_POSTINGS = [
+    ("Senior Product Designer", "SaaS company. Figma, design systems, user research, prototyping. Improve activation and retention."),
+    ("Product Designer", "B2B SaaS. Figma, prototyping, usability testing, accessibility (WCAG). Drive conversion."),
+    ("Product Designer II", "Fintech. Figma, design systems, user research, A/B testing. Improve conversion."),
+    ("UX Designer", "Agency. Wireframes, user flows, Figma, usability testing."),
+    ("Senior Product Designer", "SaaS. Design systems, Figma, accessibility, cross-functional work with engineering. Retention."),
+    ("Product Designer", "E-commerce. Figma, prototyping, A/B testing, user research. Conversion rate."),
+    ("Lead Product Designer", "SaaS. Design systems, mentoring, Figma, user research. Activation."),
+    ("UX/UI Designer", "Healthcare. Figma, accessibility, wireframes, usability testing."),
+]
+
+DEMO_POSTING_FACTS = [
+    {"index": 1, "title": "Product Designer", "industry": "SaaS", "skills": ["design systems", "user research", "prototyping"], "tools": ["Figma"], "outcomes": ["activation", "retention"]},
+    {"index": 2, "title": "Product Designer", "industry": "SaaS", "skills": ["prototyping", "usability testing", "accessibility"], "tools": ["Figma"], "outcomes": ["conversion"]},
+    {"index": 3, "title": "Product Designer", "industry": "Fintech", "skills": ["design systems", "user research", "A/B testing"], "tools": ["Figma"], "outcomes": ["conversion"]},
+    {"index": 4, "title": "UX Designer", "industry": "Agency", "skills": ["wireframes", "user flows", "usability testing"], "tools": ["Figma"], "outcomes": []},
+    {"index": 5, "title": "Product Designer", "industry": "SaaS", "skills": ["design systems", "accessibility", "cross-functional collaboration"], "tools": ["Figma"], "outcomes": ["retention"]},
+    {"index": 6, "title": "Product Designer", "industry": "E-commerce", "skills": ["prototyping", "A/B testing", "user research"], "tools": ["Figma"], "outcomes": ["conversion"]},
+    {"index": 7, "title": "Product Designer", "industry": "SaaS", "skills": ["design systems", "mentoring", "user research"], "tools": ["Figma"], "outcomes": ["activation"]},
+    {"index": 8, "title": "UX Designer", "industry": "Healthcare", "skills": ["accessibility", "wireframes", "usability testing"], "tools": ["Figma"], "outcomes": []},
+]
+
+DEMO_LI_NARRATIVE = {
+    "verdict": "Recruiters searching for a Product Designer will find you, but searches that add design systems or accessibility pass you by, because your experience never shows them.",
+    "rationales": [
+        {"name": "Headline", "rationale": "Names the title and three of the skills postings ask for most."},
+        {"name": "About section", "rationale": "Clear and specific, but short: 50 words where 200 lets you work in more of the search terms."},
+        {"name": "Keyword coverage", "rationale": "Figma, prototyping and user research are covered; design systems, accessibility and A/B testing are not shown in your experience."},
+        {"name": "Experience descriptions", "rationale": "Brightly is well described with a number; Northwind is short and has no result."},
+        {"name": "Experience titles", "rationale": "Both titles match the design titles postings use."},
+        {"name": "Career timeline", "rationale": "No gaps, and both roles ran over a year."},
+        {"name": "Skills", "rationale": "14 skills listed; adding the essential terms you can back up helps search ranking."},
+        {"name": "Network", "rationale": "420 connections; 500+ is where recruiters stop noticing."},
+        {"name": "Credibility", "rationale": "One recommendation and a degree; no certifications."},
+        {"name": "Profile completeness", "rationale": "Add a banner and a Featured section."},
+    ],
+    "strengths": ["Headline names the target title", "Usability testing is backed by a concrete number", "Clean, gap-free timeline"],
+    "gaps": ["Design systems is listed in Skills but no role shows it", "Accessibility and A/B testing are nowhere on the profile", "Northwind Studio has no result"],
+    "red_flags": [],
+    "changes": [
+        {"priority": "high", "section": "Experience — Brightly", "issue": "Design systems is only a listed skill.", "current": "Built high-fidelity prototypes in Figma for every major release.", "suggested": "Built high-fidelity prototypes in Figma for every major release, using [the shared component library you maintained].", "why": "Half the postings ask for design systems; recruiters trust it more when a role shows it."},
+        {"priority": "medium", "section": "About", "issue": "Short for search.", "current": "I design web products for SaaS teams.", "suggested": "I design web products for SaaS teams, from user research to tested Figma prototypes.", "why": "About is searched; more of the terms recruiters use, in your own words, helps."},
+    ],
+    "top_half": [
+        {"headline": "Product Designer | Usability testing, user research and Figma prototyping for SaaS", "about_opening": "I design SaaS products from research to tested prototype. At Brightly I run usability tests with 12 customers each quarter and turn the findings into Figma prototypes the team ships."},
+        {"headline": "Product Designer at Brightly | Research-led SaaS design in Figma", "about_opening": "Most of my work starts with customers: interviews, usability tests and journey maps, then prototypes in Figma for every major release."},
+        {"headline": "Product Designer | Turning usability research into shipped SaaS features", "about_opening": "I help SaaS teams ship features customers can use the first time, by testing with real customers every quarter and prototyping in Figma before code."},
+    ],
+    "experience_rewrites": [
+        {"company": "Brightly", "title": "Product Designer", "problem": "New customers were getting stuck during onboarding.", "action": "Led usability testing with 12 customers each quarter and redesigned the onboarding flow in Figma.", "result": "[Onboarding completion rose X%]", "skill": "usability testing", "text": "New customers were getting stuck in onboarding. I led usability testing with 12 customers each quarter and redesigned the flow in Figma; [onboarding completion rose X%]."},
+        {"company": "Northwind Studio", "title": "UX Designer", "problem": "Clients needed to sign off designs before build.", "action": "Created wireframes and user flows for each client.", "result": "[N projects signed off on first review]", "skill": "wireframes", "text": "Clients needed to approve designs before build, so I created wireframes and user flows for each one; [N projects signed off on first review]."},
+    ],
+    "proof_questions": [
+        {"term": "design systems", "question": "Have you built or maintained a shared component library at Brightly or Northwind? Which one, and roughly how many components?"},
+        {"term": "accessibility", "question": "Have you designed to WCAG or run accessibility checks on any project? Which one?"},
+        {"term": "A/B testing", "question": "Have any of your designs been A/B tested? What changed in the result?"},
+    ],
+}

@@ -17,7 +17,7 @@ import httpx
 from pydantic import ValidationError
 
 from .settings import env
-from . import cache, scoring
+from . import cache, discover, scoring
 from .models import (
     Analysis,
     ApplyKit,
@@ -28,6 +28,9 @@ from .models import (
     ChatMessage,
     CompareResult,
     LinkedInProfile,
+    Discoverability,
+    PostingsFacts,
+    SearchMap,
     ProfileFromPdf,
     ProfileNarrative,
     ResumeEdit,
@@ -215,7 +218,29 @@ Empty list if none.
 - changes: 6-10 edits, highest impact first. Include a rewritten headline (under 220 characters) and an About \
 opening (first 2-3 lines) as `suggested` text. `section` is the profile section (Headline, About, Experience — \
 <company>, Skills, Featured...). `current` quotes the profile.
-- Truthfulness: use only facts on the profile. Where a metric would help, use a [placeholder]."""
+- Truthfulness: use only facts on the profile. Where a metric would help, use a [placeholder].
+- top_half: exactly 3 versions, each a headline (under 220 characters, leading with the target title or a title \
+variant from <search_map>) and an about_opening (the first 2-3 lines of About, what shows before "see more"). Build \
+them only from facts on the profile; prefer essential terms the <evidence_map> marks "proven" or "claimed". Never \
+name a "missing" term. No buzzwords or generic phrases. Make the three genuinely different angles.
+- experience_rewrites: for the 2-4 most relevant roles, a description framed as problem -> action -> result -> \
+skill proved. Use only what that role's description (or the About) says; where the result has no number on the \
+profile, write a [placeholder] such as [X%] or [N customers]. `skill` is the search-map term the entry proves. \
+`text` is the ready-to-paste description in first person, 2-3 sentences.
+- proof_questions: for up to 5 essential or useful terms the <evidence_map> marks "missing" or "claimed", one short \
+question asking whether and where the candidate has done it. Ask; never assume they have."""
+
+POSTINGS_INSTRUCTIONS = """These are recent job postings for <role>. For EACH posting, list what it asks for. Do not count, \
+rank or merge postings.
+- index: the posting's number from <posting n="...">.
+- title: the posting's job title in its common searchable form, without seniority words, levels, location or team \
+("Sr. Growth Marketing Manager II - EMEA" -> "Growth Marketing Manager").
+- industry: the employer's industry in 1-3 words ("SaaS", "Banking", "E-commerce"), "" if unclear.
+- skills: methods and domain skills the posting asks for ("SEO", "A/B testing", "stakeholder management"), short \
+canonical spelling. No soft traits ("communication", "team player", "self-starter").
+- tools: named software, platforms and languages ("HubSpot", "SQL", "Google Ads").
+- outcomes: results the role is measured on, 2-4 words each ("pipeline growth", "customer retention"). Empty if none.
+- Spell the same thing the same way in every posting."""
 
 KIT_INSTRUCTIONS = """The candidate has the analysis above. Build their application kit so they stand out \
 as a top candidate for this specific role.
@@ -592,21 +617,97 @@ async def profile_from_pdf_text(text: str) -> LinkedInProfile:
     return profile
 
 
-async def analyze_profile(profile: LinkedInProfile, target_role: str) -> Analysis:
-    """Same split as the resume: code scores the profile's facts, the model explains and suggests rewrites."""
+SEARCH_MAP_POSTINGS = 15
+SEARCH_MAP_CACHE_S = 7 * 86400
+POSTING_CHARS = 3000
+
+
+def guess_country(location: str) -> str:
+    from .jobs import COUNTRIES
+    low = location.lower()
+    aliases = {"united states": "USA", "united kingdom": "UK", "england": "UK", "emirates": "UAE", "dubai": "UAE"}
+    return next((c for c in COUNTRIES if c.lower() in low), None) or next((v for k, v in aliases.items() if k in low), "USA")
+
+
+async def search_map(role: str, country: str) -> SearchMap | None:
+    """What recruiters search for this role, counted over real recent postings. One model call reads the postings;
+    the counting is code. Cached per role+country for a week. None when postings can't be fetched."""
+    from . import jobs
+    key = _key("search-map-v1", " ".join(role.lower().split()), country)
+    cached = await cache.get("search-maps", key, SearchMap, max_age_s=SEARCH_MAP_CACHE_S)
+    if cached:
+        return cached
+    try:
+        postings = await jobs.search(role, "", country, limit=SEARCH_MAP_POSTINGS)
+    except jobs.JobSearchError:
+        return None
+    if len(postings) < discover.MIN_POSTINGS:
+        return None
+    blocks = "\n\n".join(f'<posting n="{i}">\nTitle: {p.title}\n{p.description[:POSTING_CHARS]}\n</posting>' for i, p in enumerate(postings, 1))
+    try:
+        facts = await _parse(f"<role>{role}</role>\n\n{blocks}\n\n{POSTINGS_INSTRUCTIONS}", PostingsFacts, effort="low")
+    except AIError:
+        return None  # the review still runs on the estimated keyword list
+    smap = discover.build_search_map(role, country, postings, facts.postings)
+    await cache.put("search-maps", key, smap)
+    return smap
+
+
+def _demo_search_map(role: str, country: str) -> SearchMap:
+    from types import SimpleNamespace
+    from . import demo
+    from .models import PostingFacts
+    postings = [SimpleNamespace(title=t, description=d) for t, d in demo.DEMO_POSTINGS]
+    return discover.build_search_map(role, country, postings, [PostingFacts.model_validate(f) for f in demo.DEMO_POSTING_FACTS])
+
+
+def _map_block(smap: SearchMap) -> str:
+    terms = [t.model_dump(include={"term", "kind", "share", "label"}) for t in smap.terms if t.label != "noise"][:40]
+    return f"<search_map postings=\"{smap.postings}\">\n{json.dumps(terms, indent=1)}\n</search_map>"
+
+
+async def analyze_profile(profile: LinkedInProfile, target_role: str, country: str = "") -> Analysis:
+    """Same split as the resume: code scores the profile's facts and runs the recruiter searches, the model
+    explains and writes the rewrites (which code then checks)."""
     role = target_role.strip() or (profile.experiences[0].title if profile.experiences else "") or profile.headline[:60]
-    seniority = "mid"
-    expected = [] if demo_mode() else await role_keywords(role, seniority)
-    card = scoring.compute_profile(profile, role, expected)
+    country = country or guess_country(profile.location)
     if demo_mode():
-        raise AIError("Profile reviews need an AI model, and Screenproof isn't connected to one right now.")
-    brief = profile.model_dump(exclude={"source"})
-    content = (
-        f"<target_role>{role}</target_role>\n\n<linkedin_profile>\n{json.dumps(brief, indent=1)}\n</linkedin_profile>\n\n"
-        f"{_scorecard_block(card)}\n\n{PROFILE_NARRATIVE_INSTRUCTIONS}"
+        smap = _demo_search_map(role, country)
+    else:
+        smap = await search_map(role, country)
+        if smap is None:
+            smap = discover.estimated_map(role, await role_keywords(role, "mid"))
+    weighted = discover.scored_terms(smap)
+    card = scoring.compute_profile(profile, role, [t for t, _ in weighted], weights={t.term: w for t, w in weighted},
+                                   postings=smap.postings)
+    evidence = discover.evidence_map(profile, smap)
+    searches = discover.discoverability(profile, role, smap)
+    if demo_mode():
+        from . import demo
+        narrative = ProfileNarrative.model_validate(demo.DEMO_LI_NARRATIVE)
+    else:
+        brief = profile.model_dump(exclude={"source"})
+        content = (
+            f"<target_role>{role}</target_role>\n\n<linkedin_profile>\n{json.dumps(brief, indent=1)}\n</linkedin_profile>\n\n"
+            f"{_map_block(smap)}\n\n<evidence_map>\n{json.dumps([e.model_dump() for e in evidence], indent=1)}\n</evidence_map>\n\n"
+            f"<recruiter_searches>\n{json.dumps([c.model_dump() for c in searches], indent=1)}\n</recruiter_searches>\n\n"
+            f"{_scorecard_block(card)}\n\n{PROFILE_NARRATIVE_INSTRUCTIONS}"
+        )
+        narrative = await _parse(content, ProfileNarrative, effort="medium", writing=True)
+    analysis = scoring.assemble_profile(card, narrative, profile, role)
+    known = " ".join([profile.headline, profile.about, *(f"{e.title} {e.company} {e.description}" for e in profile.experiences), *profile.skills])
+    missing = [e.term for e in evidence if e.status == "missing"]
+    asked = {discover.canon(e.term) for e in evidence if e.status != "proven"}
+    top = [t.model_copy(update={"warnings": discover.rewrite_warnings(f"{t.headline} {t.about_opening}", known, missing)
+                                + ([f"Headline is {len(t.headline)} characters; LinkedIn allows 220."] if len(t.headline) > 220 else [])})
+           for t in narrative.top_half[:3]]
+    exp = [x.model_copy(update={"warnings": discover.rewrite_warnings(x.text, known, missing)}) for x in narrative.experience_rewrites[:4]]
+    questions = [q for q in narrative.proof_questions if discover.canon(q.term) in asked][:5]
+    analysis.discover = Discoverability(
+        search_map=smap, evidence=evidence, searches=searches, target_titles=discover.target_titles(role, smap),
+        top_half=top, experience_rewrites=exp, proof_questions=questions,
     )
-    narrative = await _parse(content, ProfileNarrative, effort="medium", writing=True)
-    return scoring.assemble_profile(card, narrative, profile, role)
+    return analysis
 
 
 async def build_kit(resume: str, job: Job, analysis: Analysis) -> ApplyKit:

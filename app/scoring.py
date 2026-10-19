@@ -996,7 +996,10 @@ def _name_ok(name: str) -> bool:
     return bool(name.strip()) and not re.search(r"[^\w\s.,'’()-]", name) and not (len(letters) > 3 and (letters.isupper() or letters.islower()))
 
 
-def compute_profile(profile: LinkedInProfile, target_role: str, expected: list, today: date | None = None) -> Scorecard:
+def compute_profile(profile: LinkedInProfile, target_role: str, expected: list, today: date | None = None,
+                    weights: dict[str, int] | None = None, postings: int = 0) -> Scorecard:
+    """expected: terms with .term/.aliases (RoleKeyword, or SearchTerm from a search map). weights: term -> weight
+    (essential 2, useful 1) when the terms come from `postings` real postings; otherwise every term weighs 1."""
     today = today or date.today()
     role_norm, head_norm = _norm(target_role), _norm(profile.headline)
     all_text = _norm(" ".join([profile.headline, profile.about, *(f"{e.title} {e.description}" for e in profile.experiences), *profile.skills]))
@@ -1021,8 +1024,10 @@ def compute_profile(profile: LinkedInProfile, target_role: str, expected: list, 
         f"{words} words (200+ is ideal); {len(about_kw)} target keywords; {'has' if _has_number(profile.about) else 'no'} measurable results",
     )
 
-    kw_pct = round(100 * len(hits) / len(terms)) if terms else 0
-    parts["Keyword coverage"] = (kw_pct, f"{len(hits)} of {len(terms)} keywords recruiters search for {target_role} appear on your profile")
+    w = {k.term: (weights or {}).get(k.term, 1) for k in terms}
+    kw_pct = round(100 * sum(w[t] for t in hits) / sum(w.values())) if terms else 0
+    basis = f" (from {postings} recent postings; essential terms count double)" if postings else ""
+    parts["Keyword coverage"] = (kw_pct, f"{len(hits)} of {len(terms)} keywords recruiters search for {target_role} appear on your profile{basis}")
 
     recent = profile.experiences[:3]
     if recent:

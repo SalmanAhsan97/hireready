@@ -17,8 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .settings import env
-from . import ai, cache, jobs, pdf
-from .models import Analysis, ChatMessage, Job
+from . import ai, cache, discover, jobs, pdf
+from .models import Analysis, ChatMessage, Job, LinkedInProfile
 from .parsing import JobFetchError, extract_resume, extract_resume_text, fetch_job, fetch_linkedin_profile, linkedin_sources
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -85,7 +85,12 @@ def preview_of(a: Analysis) -> tuple[Analysis, dict]:
         "red_flags": len(a.red_flags),
         "requirements": len(a.requirements),
     }
-    return a.model_copy(update={
+    update = {}
+    if a.discover:  # the search map and recruiter searches are the taste; the rewrites are the full report
+        d = a.discover
+        locked["rewrites"] = len(d.top_half) + len(d.experience_rewrites) + len(d.proof_questions)
+        update["discover"] = d.model_copy(update={"top_half": [], "experience_rewrites": [], "proof_questions": []})
+    return a.model_copy(update={**update, 
         "changes": a.changes[:1],
         "missing_keywords": [],
         "gaps": a.gaps[:1],
@@ -279,6 +284,7 @@ async def linkedin_review(
     request: Request,
     profile_url: str = Form(""),
     target_role: str = Form(""),
+    country: str = Form(""),
     profile_pdf: UploadFile | None = File(None),
 ):
     """Evaluate a LinkedIn profile against a target title: from the profile link (scraped) or the
@@ -288,9 +294,14 @@ async def linkedin_review(
         raise HTTPException(401, {"code": "access_code", "message": "That access code isn't valid. Clear it for a free preview."})
     if not profile_url.strip() and not profile_pdf:
         raise HTTPException(400, "Add your LinkedIn profile link or upload your LinkedIn PDF.")
+    if country and country not in jobs.COUNTRIES:
+        raise HTTPException(400, "Pick a country from the list.")
     await enforce_limit(request, "analyze" if full else "preview")
     try:
-        if profile_pdf and profile_pdf.filename:
+        if ai.demo_mode():  # like the resume demo: score a sample profile with the real code
+            from .demo import DEMO_LI_PROFILE
+            profile = LinkedInProfile.model_validate(DEMO_LI_PROFILE)
+        elif profile_pdf and profile_pdf.filename:
             data = await profile_pdf.read()
             if len(data) > MAX_UPLOAD:
                 raise HTTPException(413, "That PDF is over 5 MB.")
@@ -301,7 +312,7 @@ async def linkedin_review(
             profile = await ai.profile_from_pdf_text(text)
         else:
             profile = await fetch_linkedin_profile(profile_url)
-        analysis = await ai.analyze_profile(profile, target_role)
+        analysis = await ai.analyze_profile(profile, target_role, country)
     except JobFetchError as e:
         raise HTTPException(422, {"code": "profile_fetch_failed", "message": str(e)})
     except ai.AIError as e:
@@ -407,6 +418,17 @@ async def find_jobs(req: JobSearchRequest, request: Request):
     except jobs.JobSearchError as e:
         raise HTTPException(502, str(e))
     return {"jobs": jobs.rank_by_fit(found, req.skills)}
+
+
+class AppearancesRequest(BaseModel):
+    pasted: str
+    targets: list[str]
+
+
+@app.post("/api/linkedin/appearances")
+async def linkedin_appearances(req: AppearancesRequest):
+    """Compare the titles LinkedIn's "Search appearances" lists with the target titles. Pure code, no model call."""
+    return discover.compare_appearances(req.pasted[:5000], [t[:100] for t in req.targets[:10]])
 
 
 class ChatRequest(BaseModel):

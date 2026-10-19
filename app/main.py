@@ -22,7 +22,7 @@ from .parsing import JobFetchError, extract_resume, extract_resume_text, fetch_j
 STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_UPLOAD = 5 * 1024 * 1024
 
-app = FastAPI(title="HireReady")
+app = FastAPI(title="Screenproof")
 
 # Public deploys: require a shared access code and cap paid work (scrapes + Claude calls) per visitor per day.
 ACCESS_CODE = os.getenv("HIREREADY_ACCESS_CODE", "")

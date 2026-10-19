@@ -1,6 +1,6 @@
-# HireReady: plans and monetization
+# Screenproof: plans and monetization
 
-HireReady is a web app for job seekers. The free tier earns trust with an honest score, and the paid tier pays for the expensive parts: a premium model for writing, paid scrapers for complete data, and deeper features.
+Screenproof is a web app for job seekers. The free tier earns trust with an honest score, and the paid tier pays for the expensive parts: a premium model for writing, paid scrapers for complete data, and deeper features.
 
 ## Principles
 
@@ -30,7 +30,7 @@ Limits are environment variables (`HIREREADY_PREVIEW_LIMIT`, `HIREREADY_DAILY_LI
 
 ## Resume comparison (Pro)
 
-Upload 2–4 versions of a resume (or candidates' resumes) and one job link or description. HireReady:
+Upload 2–4 versions of a resume (or candidates' resumes) and one job link or description. Screenproof:
 
 - extracts the job's requirements **once** and checks every resume against that same list, so the scores compare fairly;
 - scores each resume with the normal deterministic engine;

@@ -187,4 +187,4 @@ DEMO_KIT = {
     ],
 }
 
-DEMO_CHAT_REPLY = "Resume editing needs an AI model, and HireReady isn't connected to one right now — so this is a sample reply and your resume wasn't changed."
+DEMO_CHAT_REPLY = "Resume editing needs an AI model, and Screenproof isn't connected to one right now — so this is a sample reply and your resume wasn't changed."

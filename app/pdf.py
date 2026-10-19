@@ -1,4 +1,4 @@
-"""Render HireReady's resume Markdown (# name, header lines, ## sections, ### roles, - bullets, **bold**) to a one-column PDF."""
+"""Render Screenproof's resume Markdown (# name, header lines, ## sections, ### roles, - bullets, **bold**) to a one-column PDF."""
 
 import re
 from pathlib import Path

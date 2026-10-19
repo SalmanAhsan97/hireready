@@ -371,7 +371,7 @@ async def _gemini_parse(content: str, schema, effort: str, models: list[str] | N
             if resp.status_code in (401, 403):
                 raise AIError("The Gemini API key is invalid. Check GEMINI_API_KEY.")
             if resp.status_code == 429:
-                raise AIError("HireReady is busy right now. Try again in a minute.")
+                raise AIError("Screenproof is busy right now. Try again in a minute.")
             if resp.status_code != 200:
                 raise AIError(f"Gemini is busy right now ({resp.status_code}). Try again in a minute.")
             data = resp.json()
@@ -571,7 +571,7 @@ async def profile_from_pdf_text(text: str) -> LinkedInProfile:
     if cached:
         return cached
     if demo_mode():
-        raise AIError("Reading a LinkedIn PDF needs an AI model, and HireReady isn't connected to one right now.")
+        raise AIError("Reading a LinkedIn PDF needs an AI model, and Screenproof isn't connected to one right now.")
     pdf = await _parse(f"<linkedin_pdf>\n{text}\n</linkedin_pdf>\n\n{PROFILE_PDF_INSTRUCTIONS}", ProfileFromPdf, effort="low")
     slug = re.search(r"linkedin\.com/in/([^/\s?#]+)", pdf.profile_url or text)
     profile = LinkedInProfile(
@@ -593,7 +593,7 @@ async def analyze_profile(profile: LinkedInProfile, target_role: str) -> Analysi
     expected = [] if demo_mode() else await role_keywords(role, seniority)
     card = scoring.compute_profile(profile, role, expected)
     if demo_mode():
-        raise AIError("Profile reviews need an AI model, and HireReady isn't connected to one right now.")
+        raise AIError("Profile reviews need an AI model, and Screenproof isn't connected to one right now.")
     brief = profile.model_dump(exclude={"source"})
     content = (
         f"<target_role>{role}</target_role>\n\n<linkedin_profile>\n{json.dumps(brief, indent=1)}\n</linkedin_profile>\n\n"

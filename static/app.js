@@ -3,7 +3,7 @@ const $$ = (s) => document.querySelectorAll(s);
 const state = { resumeText: "", job: null, analysis: null, kit: null, chat: { messages: [], md: "" }, preview: false, locked: null, contact: "rnwedesign@gmail.com" };
 
 const LOCK_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>';
-const mailto = () => `mailto:${state.contact}?subject=${encodeURIComponent("HireReady — full access & pricing")}&body=${encodeURIComponent("Hi,\n\nI tried the HireReady preview and I'd like the full version. Could you share pricing?\n\nThanks")}`;
+const mailto = () => `mailto:${state.contact}?subject=${encodeURIComponent("Screenproof — full access & pricing")}&body=${encodeURIComponent("Hi,\n\nI tried the Screenproof preview and I'd like the full version. Could you share pricing?\n\nThanks")}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const lockBox = (title, sub, tall = false) => `
   <div class="locked ${tall ? "tall" : ""}">

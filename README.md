@@ -1,4 +1,4 @@
-# HireReady
+# Screenproof
 
 [![tests](https://github.com/SalmanAhsan97/hireready/actions/workflows/tests.yml/badge.svg)](https://github.com/SalmanAhsan97/hireready/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -6,13 +6,13 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 [![Live demo](https://img.shields.io/badge/demo-live-4f46e5)](https://web-production-7af8e.up.railway.app)
 
-![HireReady — resume scores you can actually trust](docs/social-preview.png)
+![Screenproof — beat the screen, land the interview](docs/social-preview.png)
 
 **Score your resume against a real job, see exactly which requirements you meet, and fix the gaps — with scores that don't change every time you click.**
 
 **Live demo:** [web-production-7af8e.up.railway.app](https://web-production-7af8e.up.railway.app) (free preview, no sign-up)
 
-HireReady reads a resume (PDF, DOCX or text), optionally pulls a LinkedIn job posting, and returns a 0–100 match score, a requirement-by-requirement check, ranked edits, an AI resume editor and a ready-to-send application kit. It can also review a LinkedIn profile against the title you're targeting.
+Screenproof reads a resume (PDF, DOCX or text), optionally pulls a LinkedIn job posting, and returns a 0–100 match score, a requirement-by-requirement check, ranked edits, an AI resume editor and a ready-to-send application kit. It can also review a LinkedIn profile against the title you're targeting.
 
 ## Screenshots
 
@@ -33,7 +33,7 @@ HireReady reads a resume (PDF, DOCX or text), optionally pulls a LinkedIn job po
 
 ## Why it's worth using
 
-Job seekers usually get one of two things: a vague "78% match" that changes every time they click, or generic advice that ignores the job in front of them. HireReady is built to answer the questions that decide whether an application gets read:
+Job seekers usually get one of two things: a vague "78% match" that changes every time they click, or generic advice that ignores the job in front of them. Screenproof is built to answer the questions that decide whether an application gets read:
 
 - **Will I pass the screen for *this* job?** Every requirement in the posting is checked, with the line from your resume that proves it, or marked missing.
 - **What exactly should I change?** Ranked, ready-to-paste edits, the keywords an ATS will search for word-for-word, and a resume editor that won't invent facts.
@@ -52,7 +52,7 @@ Job seekers usually get one of two things: a vague "78% match" that changes ever
 
 ## The interesting part: deterministic scoring
 
-Most AI resume tools ask a model for a score, so the same resume gets a different number on every run. HireReady splits the work:
+Most AI resume tools ask a model for a score, so the same resume gets a different number on every run. Screenproof splits the work:
 
 1. **The model extracts facts, once.** It lists the job's requirements (one skill per item, must-have vs nice-to-have, years, education) and quotes the resume line that supports each one. Extractions are cached by content hash, so the same inputs reuse the same facts.
 2. **Code computes the score.** Python verifies every quote actually appears in the resume, matches keywords literally (with aliases and word-proximity, like an ATS), compares degree levels and years, and applies fixed weights. Same facts → same score, every time.

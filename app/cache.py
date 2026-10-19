@@ -118,7 +118,7 @@ async def save_analysis(row: dict):
 
 HISTORY = "history"
 HISTORY_FIELDS = ("resume_name", "mode", "job_title", "company", "job_url", "overall_score", "standing", "outcome")
-OUTCOMES = ("interview", "offer", "rejected", "no_reply")
+OUTCOMES = ("applied", "interview", "offer", "rejected", "no_reply")
 
 
 async def save_history(key: str, value: dict):

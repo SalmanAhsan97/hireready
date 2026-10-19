@@ -559,3 +559,27 @@ textarea { resize: vertical; }
 /* job fit */
 .job-fit { display: block; font-size: 12px; color: var(--good); margin-top: 2px; }
 .chip.miss { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+
+/* decision + confidence */
+.assess { margin: 0 0 12px; display: grid; gap: 6px; }
+.assess-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.decision { font-weight: 700; font-size: 14px; padding: 5px 12px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.decision.apply { background: var(--good-soft); color: var(--good); }
+.decision.stretch, .decision.provisional { background: var(--warn-soft); color: var(--warn); }
+.decision.deprioritize, .decision.ineligible { background: var(--bad-soft); color: var(--bad); }
+.confidence { font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 10px; border-radius: 99px; border: 1px solid var(--border); cursor: help; }
+.assess-why { margin: 0; font-size: 14px; }
+.assess-reasons { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+
+/* gate toggles */
+.gates li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
+.gates ul { list-style: none; padding-left: 0; }
+.gate-btns { display: inline-flex; gap: 4px; margin-left: auto; }
+.gate-btns button { font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
+.gate-btns button.on.yes { background: var(--good-soft); color: var(--good); border-color: var(--good); font-weight: 700; }
+.gate-btns button.on.no { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); font-weight: 700; }
+
+/* writing checks */
+.writing-flags { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+.wf-title { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.writing-flags ul { margin: 0; padding-left: 18px; font-size: 14px; }

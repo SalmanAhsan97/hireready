@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import re
+from datetime import date
 
 import httpx
 from bs4 import BeautifulSoup
@@ -252,6 +253,7 @@ async def fetch_job(url: str, premium: bool = True) -> Job:
         if cached:
             return cached
         job = await (fetch_linkedin(job_id) if premium else fetch_linkedin_public(job_id))
+        job.fetched_at = job.fetched_at or date.today().isoformat()  # cached copies keep the date they were read
         # Don't pin a degraded fallback: if a provider is configured but failed, refetch next time.
         if not linkedin_sources() or job.sources != ["LinkedIn public page"]:
             await cache.put("postings", job_id, job)

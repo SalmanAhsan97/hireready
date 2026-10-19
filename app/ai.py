@@ -92,7 +92,11 @@ When a rewrite would benefit from a metric the resume lacks, use a bracketed pla
 [X%] or [team size] for the candidate to fill in.
 - Be candid. A weak match should score low; inflated scores don't help anyone get hired.
 - Write to the candidate directly ("you", "your"). Never refer to them in the third person or guess their pronouns.
-- Quote the resume's actual wording in `current` fields so the candidate can find it."""
+- Quote the resume's actual wording in `current` fields so the candidate can find it.
+- Write like a specific, credible person: no generic phrases ("passionate", "results-driven", "dynamic", \
+"detail-oriented", "team player", "proven track record"). Show the action, the context and the result instead.
+- Mention work authorisation (e.g. permanent resident, authorised to work) at most once, and only if it's in the \
+resume or the posting asks. Don't repeat the same metric in the summary and the bullets."""
 
 REQUIREMENTS_RULES = """Requirements (job side):
 - List every distinct requirement the posting states: skills/tools, years of experience, the role/title \
@@ -222,7 +226,8 @@ lead bullets with strong verbs and outcomes, keep it to what fits on 1-2 pages. 
 use [placeholders] for metrics the candidate must supply.
 - projected_score: honest estimate of the score after these changes.
 - positioning_statement: 2 sentences — the angle that makes this candidate memorable for this role.
-- cover_letter: 250-350 words, specific to the company and role, no clichés, no "I am writing to apply".
+- cover_letter: 250-350 words, specific to the company and role, no clichés, no "I am writing to apply". \
+Don't invent a hiring manager's or recruiter's name: use one only if the posting gives it, otherwise "Hiring team".
 - linkedin_connection_note: under 300 characters, for connecting with the recruiter or hiring manager.
 - recruiter_message: a short LinkedIn DM (under 120 words) after connecting.
 - hiring_manager_email_subject / _body: concise outreach email (under 150 words).
@@ -490,7 +495,8 @@ async def analyze(resume: str, job: Job) -> Analysis:
         company=reqs.company or job.company,
     )
     changes, projected = scoring.edit_gains(resume, analysis.changes, lambda t: scoring.compute(t, reqs, evidence).overall, card.overall)
-    return analysis.model_copy(update={"changes": changes, "projected_score": projected})
+    return analysis.model_copy(update={"changes": changes, "projected_score": projected, "writing_flags": scoring.writing_flags(resume),
+                                       "assessment": scoring.assess(card, job.description, resume, projected)})
 
 
 async def role_keywords(role: str, seniority: str) -> list:
@@ -534,7 +540,7 @@ async def analyze_resume(resume: str) -> Analysis:
 
     analysis = scoring.assemble_resume(card, narrative, profile)
     changes, projected = scoring.edit_gains(resume, analysis.changes, lambda t: scoring.compute_resume(t, profile).overall, card.overall)
-    return analysis.model_copy(update={"changes": changes, "projected_score": projected})
+    return analysis.model_copy(update={"changes": changes, "projected_score": projected, "writing_flags": scoring.writing_flags(resume)})
 
 
 async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage], job: Job | None, analysis: Analysis | None) -> ResumeEdit:
@@ -559,10 +565,9 @@ async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage],
         return edit
     # Safety net: flag any figure that appears in neither the original resume nor the user's own messages.
     known = resume + " " + " ".join(m.content for m in messages if m.role == "user")
-    unbracketed = re.sub(r"\[[^\]]*\]", " ", edit.resume_markdown)
-    new_figures = sorted({n for n in re.findall(r"\d[\d,.]*\+?%?", unbracketed) if n.rstrip(".,") not in known})
-    if new_figures:
-        edit.changes.append("Please verify — these figures aren't in your original resume: " + ", ".join(new_figures[:8]))
+    figures = new_figures(edit.resume_markdown, known)
+    if figures:
+        edit.changes.append("Please verify — these figures aren't in your original resume: " + ", ".join(figures[:8]))
     return edit
 
 
@@ -612,4 +617,18 @@ async def build_kit(resume: str, job: Job, analysis: Analysis) -> ApplyKit:
         f"{_job_block(job)}\n\n<resume>\n{resume}\n</resume>\n\n"
         f"<analysis>\n{json.dumps(analysis.model_dump(), indent=1)}\n</analysis>\n\n{KIT_INSTRUCTIONS}"
     )
-    return await _parse(content, ApplyKit, effort="high", writing=True)
+    kit = await _parse(content, ApplyKit, effort="high", writing=True)
+    # Safety net: figures in the tailored resume or outreach that appear in neither the resume nor the posting
+    known = f"{resume} {job.description} {job.title} {job.company}"
+    for label, text in (("tailored resume", kit.tailored_resume_markdown), ("cover letter", kit.cover_letter),
+                        ("outreach", f"{kit.recruiter_message} {kit.hiring_manager_email_body}")):
+        figures = new_figures(text, known)
+        if figures:
+            kit.warnings.append(f"Check the {label}: these figures aren't in your resume or the posting: " + ", ".join(figures[:8]))
+    return kit
+
+
+def new_figures(text: str, known: str) -> list[str]:
+    """Numbers in `text` (ignoring [placeholders]) that appear nowhere in `known`."""
+    unbracketed = re.sub(r"\[[^\]]*\]", " ", text)
+    return sorted({n for n in re.findall(r"\d[\d,.]*\+?%?", unbracketed) if n.rstrip(".,") not in known})

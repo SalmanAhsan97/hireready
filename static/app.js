@@ -489,7 +489,8 @@ function renderAnalysis() {
   state.jobs = [];
   const src = $("#job-source"), sources = job.sources || [];
   src.hidden = !sources.length;
-  src.textContent = sources.length ? "Job details from " + sources.join(" + ") : "";
+  const readOn = job.fetched_at ? new Date(job.fetched_at + "T12:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+  src.textContent = sources.length ? "Job details from " + sources.join(" + ") + (readOn ? ` · read ${readOn}` : "") : "";
   const st = $("#standing");
   st.textContent = a.standing;
   st.className = "standing s-" + a.standing.split(" ")[0];
@@ -501,8 +502,11 @@ function renderAnalysis() {
   warn.hidden = !warnings.length;
   warn.textContent = warnings.join(" ");
   const gates = a.gates || [];
+  state.gateAnswers = {};
   $("#gates").hidden = !gates.length;
-  $("#gates-list").innerHTML = gates.map((g) => `<li>${esc(g)}</li>`).join("");
+  $("#gates-list").innerHTML = gates.map((g, i) => `<li><span>${esc(g)}</span><span class="gate-btns" data-gate="${i}">
+    <button type="button" class="yes" data-ans="yes">I meet this</button><button type="button" class="no" data-ans="no">I don't</button></span></li>`).join("");
+  renderAssessment();
   renderScreens(a);
   const link = $("#job-link");
   link.hidden = !job.url; link.href = job.url || "#";
@@ -547,6 +551,10 @@ function renderAnalysis() {
       </div>
       <p class="why">${esc(c.why)}</p>
     </div>`).join("") + lockedEdits;
+
+  const flags = a.writing_flags || [];
+  $("#writing-flags").hidden = !flags.length || a.mode === "linkedin";
+  $("#writing-flags-list").innerHTML = flags.map((f) => `<li>${esc(f)}</li>`).join("");
 
   const proj = $("#projected"), gainTotal = a.projected_score != null && a.projected_score > a.overall_score;
   proj.hidden = !gainTotal || a.mode === "linkedin";
@@ -606,6 +614,34 @@ function renderRequirements(a) {
     ? lockBox(`${plural(lockedReqs, "requirement")} checked one by one`, "See exactly which ones you meet, with the matching lines quoted from your resume.", true)
     : group("must", "Must-have") + group("nice", "Nice-to-have");
 }
+
+// ---- Decision + confidence (confidence = how solid the analysis is, not interview odds) ----
+function renderAssessment() {
+  const A = state.analysis?.assessment, box = $("#assess");
+  box.hidden = !A;
+  if (!A) return;
+  const gates = state.analysis.gates || [];
+  const failed = gates.filter((_, i) => state.gateAnswers?.[i] === "no");
+  const decision = failed.length ? "ineligible" : A.decision;
+  const d = $("#decision");
+  d.className = "decision " + decision;
+  d.textContent = failed.length ? "Not eligible as posted" : A.decision_label;
+  $("#decision-why").textContent = failed.length
+    ? `The posting requires: ${failed.join("; ")}. Your fit is still shown below for reference.`
+    : A.decision_reason + (gates.length && Object.keys(state.gateAnswers || {}).length < gates.length ? " Confirm the eligibility conditions below." : "");
+  const c = $("#confidence");
+  c.textContent = `Confidence: ${A.confidence}`;
+  c.title = "How solid this analysis is (not your interview odds): " + A.confidence_reasons.join(" · ");
+  $("#confidence-reasons").innerHTML = A.confidence === "high" ? "" : A.confidence_reasons.map((r) => `<li>${esc(r)}</li>`).join("");
+}
+$("#gates-list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-ans]");
+  if (!b) return;
+  const row = b.parentElement;
+  state.gateAnswers[row.dataset.gate] = b.dataset.ans;
+  row.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+  renderAssessment();
+});
 
 // ---- How each screen sees you: strict ATS, recruiter/AI ranker, 7-second skim ----
 function renderScreens(a) {
@@ -799,6 +835,9 @@ function renderKit() {
   $("#positioning").textContent = k.positioning_statement;
   $("#proj-from").textContent = state.analysis.overall_score;
   $("#proj-to").textContent = k.projected_score;
+  const kw = $("#kit-warn");
+  kw.hidden = !(k.warnings || []).length;
+  kw.textContent = (k.warnings || []).join(" ");
   $("#resume-doc").innerHTML = markdown(k.tailored_resume_markdown);
   $("#letter-doc").innerHTML = inline(k.cover_letter);
   $("#note").textContent = k.linkedin_connection_note;
@@ -859,6 +898,8 @@ async function downloadResume(markdownText, suffix, format) {
   a.download = name.replace(/[^\w-]+/g, "_") + "." + format;
   a.click();
   URL.revokeObjectURL(a.href);
+  const pages = res.headers.get("X-Pages"), readable = res.headers.get("X-Text-Readable");
+  if (pages) toast(`PDF checked: ${pages} page${pages === "1" ? "" : "s"} · ${readable}% of the text readable by an ATS`);
 }
 
 // ---- Status ----
@@ -895,7 +936,7 @@ const when = (iso) => {
 const runTarget = (h) => h.mode === "resume" ? `General resume score${h.job_title ? " · best fit: " + h.job_title : ""}`
   : h.mode === "linkedin" ? `LinkedIn review · ${h.job_title || "profile"}`
   : [h.job_title, h.company].filter(Boolean).join(" · ") || h.job_url || "Job match";
-const OUTCOMES = [["interview", "Interview"], ["offer", "Offer"], ["rejected", "Rejected"], ["no_reply", "No reply"]];
+const OUTCOMES = [["applied", "Applied"], ["interview", "Interview"], ["offer", "Offer"], ["rejected", "Rejected"], ["no_reply", "No reply"]];
 const runRow = (h) => `
   <span class="h-score">${esc(String(h.overall_score ?? "–"))}</span>
   <div class="h-main">

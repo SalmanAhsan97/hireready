@@ -283,3 +283,24 @@ def test_majority_vote_keeps_the_median_verdict_and_a_real_quote():
     assert by["r2"].status == "partial"  # met / partial / missing -> the middle one
     assert by["r3"].status == "met" and by["r3"].years == 5  # median years
     assert scoring.merge_evidence([merged], demo.DEMO_RESUME) is merged  # one reading: unchanged
+
+
+def test_assessment_confidence_and_decision():
+    job, ev = demo_extraction()
+    card = scoring.compute(demo.DEMO_RESUME, job, ev)
+    full_jd = "Senior Product Designer at Acme Cloud. " * 40
+    a = scoring.assess(card, full_jd, demo.DEMO_RESUME, projected=78)
+    assert a.decision == "apply_after_edits" and "to 78" in a.decision_reason  # 55 now, 78 after edits
+    assert a.confidence in ("high", "medium") and len(a.confidence_reasons) == 3
+    thin = scoring.assess(card, "Designer role", demo.DEMO_RESUME, projected=None)
+    assert thin.decision == "provisional" and thin.confidence == "low"
+    low = scoring.assess(card, full_jd, demo.DEMO_RESUME, projected=None)
+    assert low.decision == "stretch" and "Missing must-haves" in low.decision_reason
+
+
+def test_writing_flags():
+    text = ("Passionate, results-driven designer. Canadian permanent resident.\n- Grew signups 40%\n- Cut churn, lifting signups 40%\n"
+            "- Signups up 40% again\nAuthorized to work in Canada")
+    flags = scoring.writing_flags(text)
+    assert any("passionate" in f for f in flags) and any("40%" in f for f in flags) and any("2 times" in f for f in flags)
+    assert scoring.writing_flags(demo.DEMO_RESUME) == [f for f in scoring.writing_flags(demo.DEMO_RESUME) if "passionate" in f.lower()]

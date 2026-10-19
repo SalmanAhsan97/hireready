@@ -3,6 +3,7 @@ import hmac
 import io
 import os
 import re
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -237,7 +238,7 @@ async def analyze(
 
     # No job given: score the resume on its own. With a job: the full match process.
     if job_text.strip():
-        job = Job(url=job_url.strip(), description=job_text.strip())
+        job = Job(url=job_url.strip(), description=job_text.strip(), sources=["your paste"])
     elif job_url.strip():
         try:
             job = await fetch_job(job_url, premium=full)
@@ -245,6 +246,8 @@ async def analyze(
             raise HTTPException(422, {"code": "job_fetch_failed", "message": str(e)})
     else:
         job = Job(description="")
+    if job.description and not job.fetched_at:
+        job.fetched_at = date.today().isoformat()
 
     try:
         analysis = await (ai.analyze(resume_text, job) if job.description else ai.analyze_resume(resume_text))
@@ -469,11 +472,24 @@ def export_docx(req: ExportRequest):
 
 @app.post("/api/export/pdf", dependencies=[Depends(require_access)])
 def export_pdf(req: ExportRequest):
+    data = pdf.markdown_to_pdf(req.markdown)
+    pages, readable = pdf_check(data, req.markdown)
     return Response(
-        pdf.markdown_to_pdf(req.markdown),
+        data,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{_safe_name(req.filename)}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(req.filename)}.pdf"',
+                 "X-Pages": str(pages), "X-Text-Readable": str(readable)},
     )
+
+
+def pdf_check(data: bytes, markdown: str) -> tuple[int, int]:
+    """Re-read the exported PDF the way an ATS would: page count, and % of the resume's words found in its text."""
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    text = " ".join(p.extract_text() or "" for p in reader.pages).lower()
+    words = {w for w in re.findall(r"[a-z]{4,}", re.sub(r"\[[^\]]*\]\([^)]*\)", " ", markdown).lower())}
+    found = sum(w in text for w in words)
+    return len(reader.pages), round(100 * found / len(words)) if words else 100
 
 
 def _asset_version(name: str) -> str:

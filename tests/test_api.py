@@ -177,3 +177,21 @@ def test_job_suggestions_are_sorted_by_fit():
     b = jobs.Posting(title="Product Designer", url="https://x/2", site="indeed", description="Figma, user research, usability testing")
     ranked = jobs.rank_by_fit([a, b], ["Figma", "user research", "usability testing", "Sketch"])
     assert [p.url for p in ranked] == ["https://x/2", "https://x/1"] and ranked[0].fit == ["Figma", "user research", "usability testing"]
+
+
+def test_pdf_export_is_rechecked_for_pages_and_readable_text():
+    md = "# Jane Doe\njane@example.com\n## Experience\n- Built the Figma design system used by 30 engineers\n- Led usability testing"
+    r = client.post("/api/export/pdf", json={"markdown": md, "filename": "Jane Doe"})
+    assert r.status_code == 200 and r.headers["x-pages"] == "1" and int(r.headers["x-text-readable"]) >= 90
+
+
+def test_new_figures_guard():
+    from app import ai
+    assert ai.new_figures("Grew signups 40% across [N] teams, saving $2M", "Grew signups 40% across teams") == ["2"]
+
+
+def test_job_match_carries_assessment_and_read_date():
+    body = client.post("/api/analyze", files={"resume": RESUME}, data={"job_text": "Senior Product Designer at Acme Cloud"}).json()
+    a = body["analysis"]
+    assert a["assessment"]["decision"] == "provisional"  # one-line posting: too thin for a verdict
+    assert body["job"]["fetched_at"] and body["job"]["sources"] == ["your paste"]

@@ -221,12 +221,20 @@
           <div class="job-source" id="job-source" hidden></div>
           <span class="standing" id="standing"></span>
           <p class="verdict" id="verdict"></p>
+          <div class="assess" id="assess" hidden>
+            <div class="assess-row">
+              <span class="decision" id="decision"></span>
+              <span class="confidence" id="confidence" tabindex="0"></span>
+            </div>
+            <p class="assess-why" id="decision-why"></p>
+            <ul class="assess-reasons" id="confidence-reasons"></ul>
+          </div>
           <p class="cap-note" id="cap-note" hidden></p>
           <p class="cap-note" id="file-warn" hidden></p>
           <div class="gates" id="gates" hidden>
             <div class="gates-title">Confirm before applying</div>
             <ul id="gates-list"></ul>
-            <small>These conditions from the posting can end an application before anyone reads it. They aren't part of your score.</small>
+            <small>These conditions from the posting can end an application before anyone reads it. Tick the ones you meet; they aren't part of your score.</small>
           </div>
           <div class="actions-row">
             <a class="btn ghost" id="job-link" target="_blank" rel="noopener">View job posting ↗</a>
@@ -286,6 +294,10 @@
         <h2>What to change</h2>
         <p class="muted">Ordered by impact. Only use a suggestion if it's true for you — fill any [placeholders] with real numbers.</p>
         <div class="projected" id="projected" hidden></div>
+        <div class="writing-flags" id="writing-flags" hidden>
+          <div class="wf-title">Writing checks</div>
+          <ul id="writing-flags-list"></ul>
+        </div>
         <div id="changes"></div>
       </div>
 
@@ -344,6 +356,7 @@
         <div>
           <h2>Your application kit</h2>
           <p class="positioning" id="positioning"></p>
+          <p class="cap-note" id="kit-warn" hidden></p>
         </div>
         <div class="projection">
           <span id="proj-from"></span><span class="arrow">→</span><span id="proj-to" class="proj-to"></span>

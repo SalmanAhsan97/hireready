@@ -16,6 +16,7 @@ from .models import (
     CompareEntry,
     CompareResult,
     CompareRow,
+    Assessment,
     Lenses,
     Skim,
     Change,
@@ -696,6 +697,79 @@ def compare(job: JobRequirements, scored: list[tuple[str, Scorecard]]) -> Compar
         verdict = (f"{best.name} is the stronger fit: {best.overall_score}/100 vs {runner.overall_score}/100"
                    + (f" (+{gap})" if gap else "") + (f", with {' and '.join(why)}" if why else "") + ".")
     return CompareResult(job_title=job.job_title, company=job.company, verdict=verdict, tie=tie, entries=entries, rows=rows)
+
+
+# ---- Confidence (quality of the analysis, not interview odds) and a decision ----
+
+def assess(card: Scorecard, job_text: str, resume: str, projected: int | None) -> Assessment:
+    reqs = card.requirements
+    chars, n = len(job_text.strip()), len(reqs)
+    jd = "full" if chars >= 1200 and n >= 8 else "partial" if chars >= 400 and n >= 4 else "thin"
+    claimed = [r for r in reqs if r.status != "missing"]
+    backed = sum(bool(r.evidence or r.matched_keywords) for r in claimed)
+    verified = backed / len(claimed) if claimed else 0.0
+    dated = bool(role_spans(resume))
+
+    reasons = [{"full": "Full job posting", "partial": "Partial job posting; some requirements may be missing",
+                "thin": "Very short job text: requirements are guessed from too little"}[jd],
+               f"{backed} of {len(claimed)} matched requirements backed by a quote or keyword from your resume",
+               "Roles have dates" if dated else "No dated roles found, so experience years can't be checked"]
+    if jd == "full" and verified >= 0.7 and dated:
+        confidence = "high"
+    elif jd == "thin" or verified < 0.4 or not dated:
+        confidence = "low"
+    else:
+        confidence = "medium"
+
+    cov = card.coverage
+    missing_musts = [r.text for r in reqs if r.importance == "must" and r.status == "missing"]
+    score = card.overall
+    if jd == "thin":
+        decision, label, why = "provisional", "Paste the full posting", "The job text is too short for a reliable verdict; paste the whole description."
+    elif score >= 80 and not missing_musts:
+        decision, label, why = "apply", "Apply now", "Strong match on the must-haves."
+    elif score >= 65 or (projected is not None and projected >= 65 and len(missing_musts) <= 1):
+        decision, label = "apply_after_edits", "Apply after the top edits"
+        why = (f"The suggested edits take you from {score} to {projected}." if projected and projected > score
+               else "Good match; tighten the gaps below first.")
+        if missing_musts:
+            why += f" Must-have to address: {missing_musts[0]}."
+    elif score >= 45:
+        decision, label = "stretch", "Stretch"
+        why = ("Missing must-haves: " + "; ".join(missing_musts[:3]) + "." if missing_musts else "Partial match.") + \
+            " Apply if you have a referral or a strong reason."
+    else:
+        decision, label, why = "deprioritize", "Deprioritize", "Low alignment with this posting; adjacent roles will likely fit better."
+    return Assessment(confidence=confidence, confidence_reasons=reasons, decision=decision, decision_label=label, decision_reason=why)
+
+
+# ---- Writing checks (advisory: what a human reader notices) ----
+
+CLICHES = ["passionate", "results-driven", "results driven", "dynamic", "detail-oriented", "detail oriented", "team player",
+           "hard-working", "hardworking", "go-getter", "self-starter", "synergy", "think outside the box", "proven track record",
+           "highly motivated", "rockstar", "guru", "ninja", "seasoned professional", "fast-paced environment"]
+AUTH_LINE = re.compile(r"permanent resident|authori[sz]ed to work|work permit|work authori[sz]ation|eligible to work|no sponsorship", re.I)
+METRIC = re.compile(r"(?<![\w.])\d[\d,.]*\s?(?:%|x\b|k\b|m\b|\+)", re.I)
+
+
+def writing_flags(text: str) -> list[str]:
+    low = text.lower()
+    flags = []
+    found = [c for c in CLICHES if re.search(rf"(?<![a-z]){re.escape(c)}(?![a-z])", low)]
+    if found:
+        flags.append("Generic phrases recruiters skim past: " + ", ".join(f"\u201c{c}\u201d" for c in found[:5])
+                     + ". Replace them with what you did and the result.")
+    counts: dict[str, int] = {}
+    for m in METRIC.findall(text):
+        k = m.lower().replace(" ", "")
+        counts[k] = counts.get(k, 0) + 1
+    repeated = [k for k, v in counts.items() if v >= 3]
+    if repeated:
+        flags.append("The same figure appears 3+ times (" + ", ".join(repeated[:3]) + "). Say it once, where it has the most context.")
+    auth = len(AUTH_LINE.findall(text))
+    if auth > 1:
+        flags.append(f"Work authorisation is mentioned {auth} times. Once, near your contact details, is enough.")
+    return flags
 
 
 # ---- Resume-only mode (no job posting) ----

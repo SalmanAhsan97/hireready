@@ -11,6 +11,7 @@ class Job(BaseModel):
     criteria: List[str] = []
     description: str
     sources: List[str] = []  # where the posting came from, e.g. ["Bright Data", "Apify"]
+    fetched_at: str = ""  # ISO date the posting text was read (provenance)
 
 
 # ---- Claude extraction (input to deterministic scoring) ----
@@ -270,6 +271,15 @@ class Skim(BaseModel):
     verdict: str
 
 
+class Assessment(BaseModel):
+    """How solid the analysis is (not interview odds) and what to do about the job. Computed in code."""
+    confidence: Literal["high", "medium", "low"]
+    confidence_reasons: List[str]
+    decision: Literal["apply", "apply_after_edits", "stretch", "deprioritize", "provisional"]
+    decision_label: str
+    decision_reason: str
+
+
 class Analysis(BaseModel):
     candidate_name: str
     job_title: str
@@ -292,6 +302,8 @@ class Analysis(BaseModel):
     lenses: Optional[Lenses] = None
     skim: Optional[Skim] = None
     projected_score: Optional[int] = None  # score with every suggested edit applied, computed in code
+    assessment: Optional[Assessment] = None
+    writing_flags: List[str] = []  # clichés, repeated metrics, repeated work-authorisation lines (advisory, not scored)
 
 
 class CompareEntry(BaseModel):
@@ -353,6 +365,7 @@ class ApplyKit(BaseModel):
     who_to_contact: List[str]
     interview_talking_points: List[TalkingPoint]
     application_checklist: List[str]
+    warnings: List[str] = []  # figures in the kit that appear in neither the resume nor the job (checked in code)
 
 
 ResumeProfile.model_rebuild()

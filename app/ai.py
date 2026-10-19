@@ -241,7 +241,9 @@ def _job_block(job: Job) -> str:
 
 # ---- Extraction cache ----
 
-EXTRACT_VERSION = "3"  # bump when the extraction prompts change, to invalidate cached facts
+EXTRACT_VERSION = "4"
+# Readings per resume+job pair, majority-voted (1 = single read). Costs that many model calls on a pair's first read only.
+EVIDENCE_VOTES = max(1, int(os.getenv("HIREREADY_EVIDENCE_VOTES", "3")))  # bump when the extraction prompts change, to invalidate cached facts
 
 
 def _key(*parts: str) -> str:
@@ -258,14 +260,26 @@ async def extract(resume: str, job: Job) -> tuple[JobRequirements, ResumeEvidenc
     if reqs and evidence:
         return reqs, evidence
     if reqs:
-        evidence = await _evidence(block, reqs, resume)
+        evidence = await _voted_evidence(block, reqs, resume)
     else:
         content = f"{block}\n\n<resume>\n{resume}\n</resume>\n\n{dates}\n\n{EXTRACT_INSTRUCTIONS}"
         both = await _parse(content, Extraction, effort="medium")
-        reqs, evidence = both.job, both.resume
+        reqs = both.job
         await cache.put("jobs", job_key, reqs)
+        evidence = await _voted_evidence(block, reqs, resume, first=both.resume)
     await cache.put("evidence", pair_key, evidence)
     return reqs, evidence
+
+
+async def _voted_evidence(block: str, reqs: JobRequirements, resume: str, first: ResumeEvidence | None = None) -> ResumeEvidence:
+    """Read the resume against the requirements EVIDENCE_VOTES times and keep each requirement's median verdict.
+    Only runs on a resume+job pair's first read; the result is cached. A failed extra reading just means fewer votes."""
+    needed = EVIDENCE_VOTES - (first is not None)
+    results = await asyncio.gather(*(_evidence(block, reqs, resume) for _ in range(max(0, needed))), return_exceptions=True)
+    votes = ([first] if first else []) + [r for r in results if isinstance(r, ResumeEvidence)]
+    if not votes:
+        raise next(r for r in results if isinstance(r, Exception))
+    return scoring.merge_evidence(votes, resume)
 
 
 async def _evidence(block: str, reqs: JobRequirements, resume: str) -> ResumeEvidence:
@@ -291,7 +305,7 @@ async def compare_resumes(resumes: list[tuple[str, str]], job: Job) -> CompareRe
             key = _key(block, text)
             ev = await cache.get("evidence", key, ResumeEvidence)
             if not ev:
-                ev = await _evidence(block, reqs, text)
+                ev = await _voted_evidence(block, reqs, text)
                 await cache.put("evidence", key, ev)
             return ev
 

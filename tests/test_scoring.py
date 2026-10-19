@@ -268,3 +268,18 @@ def test_edit_gains_lenses_and_skim():
                                             lambda t: scoring.compute(t, job, ev).overall, card.overall)
     assert changes[0].gain > 0 and changes[1].gain is None
     assert projected >= card.overall + changes[0].gain
+
+
+def test_majority_vote_keeps_the_median_verdict_and_a_real_quote():
+    real = "Led usability testing for the onboarding redesign with 12 customers each quarter."
+    vote = lambda *items: ResumeEvidence(candidate_name="Demo", evidence=[Evidence(id=i, status=s, quote=q, years=y) for i, s, q, y in items])
+    merged = scoring.merge_evidence([
+        vote(("r1", "met", "Invented line not in the resume", None), ("r2", "met", real, None), ("r3", "met", "", 4.5)),
+        vote(("r1", "met", real, None), ("r2", "partial", "", None), ("r3", "partial", "", 7.2)),
+        vote(("r1", "partial", "", None), ("r2", "missing", "", None), ("r3", "met", "", 5)),
+    ], demo.DEMO_RESUME)
+    by = {e.id: e for e in merged.evidence}
+    assert by["r1"].status == "met" and by["r1"].quote == real  # 2 of 3 say met; the quote that's really there wins
+    assert by["r2"].status == "partial"  # met / partial / missing -> the middle one
+    assert by["r3"].status == "met" and by["r3"].years == 5  # median years
+    assert scoring.merge_evidence([merged], demo.DEMO_RESUME) is merged  # one reading: unchanged

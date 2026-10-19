@@ -41,3 +41,30 @@ def test_extraction_uses_the_standard_model_on_every_plan(monkeypatch):
 
 def test_busy_premium_model_falls_back(monkeypatch):
     assert _run(monkeypatch, paid=True, writing=True, premium_fails=True) == ["gemini-pro-latest", ai.GEMINI_MODEL]
+
+
+def test_first_read_of_a_pair_is_voted_then_cached(monkeypatch, tmp_path):
+    from app import cache
+    from app.models import Evidence, Extraction, JobRequirements, Requirement, ResumeEvidence, Job
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    reqs = JobRequirements(job_title="Designer", company="Acme", requirements=[
+        Requirement(id="r1", kind="skill", text="Figma", importance="must", keywords=["Figma"], min_years=None)])
+    verdicts = iter(["met", "partial", "met", "missing", "missing", "missing"])
+    calls = []
+
+    async def fake_parse(content, schema, effort, writing=False):
+        calls.append(schema.__name__)
+        ev = ResumeEvidence(candidate_name="X", evidence=[Evidence(id="r1", status=next(verdicts), quote="", years=None)])
+        return Extraction(job=reqs, resume=ev) if schema is Extraction else ev
+
+    monkeypatch.setattr(ai, "_parse", fake_parse)
+    monkeypatch.setattr(ai, "EVIDENCE_VOTES", 3)
+    job = Job(description="Designer at Acme. Figma required.")
+    _, ev = asyncio.run(ai.extract("Resume text with Figma", job))
+    assert calls == ["Extraction", "ResumeEvidence", "ResumeEvidence"]  # 1 full read + 2 extra verdicts
+    assert ev.evidence[0].status == "met"  # met, partial, met -> met
+    asyncio.run(ai.extract("Resume text with Figma", job))
+    assert len(calls) == 3  # cached: no new calls for the same pair
+    _, ev2 = asyncio.run(ai.extract("Another resume", job))
+    assert calls[3:] == ["ResumeEvidence"] * 3 and ev2.evidence[0].status == "missing"  # new pair, known job: 3 votes

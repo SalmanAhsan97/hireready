@@ -242,6 +242,36 @@ def context_and_skills(resume: str) -> tuple[str, str]:
     return _norm("\n".join(context)), _norm("\n".join(skills))
 
 
+# ---- Majority vote over several readings of the same resume against the same requirements ----
+
+_RANK = {"missing": 0, "partial": 1, "met": 2}
+
+
+def merge_evidence(votes: list[ResumeEvidence], resume: str) -> ResumeEvidence:
+    """Per requirement: the median verdict of the readings (2 of 3 agree -> theirs; all differ -> partial),
+    a quote from a reading with that verdict (one that's really in the resume first), and the median years."""
+    if len(votes) == 1:
+        return votes[0]
+    toks = _tokens(resume)
+    resume_tokens, vocab = f" {' '.join(toks)} ", set(toks)
+    by_id: dict[str, list[Evidence]] = {}
+    for v in votes:
+        for e in v.evidence:
+            by_id.setdefault(e.id, []).append(e)
+    merged = []
+    for rid, evs in by_id.items():
+        ranks = sorted(_RANK[e.status] for e in evs)
+        median = ranks[(len(ranks) - 1) // 2]  # lower median: with an even number of readings, the stricter one wins
+        status = next(k for k, r in _RANK.items() if r == median)
+        same = [e for e in evs if e.status == status] or evs
+        quotes = [e.quote for e in same if e.quote.strip()]
+        quote = next((q for q in quotes if quote_found(q, resume_tokens, vocab)), quotes[0] if quotes else "")
+        years = sorted(e.years for e in evs if e.years is not None)
+        merged.append(Evidence(id=rid, status=status, quote=quote, years=years[(len(years) - 1) // 2] if years else None))
+    name = next((v.candidate_name for v in votes if v.candidate_name.strip()), "")
+    return ResumeEvidence(candidate_name=name, evidence=merged)
+
+
 # ---- Degrees (compared in code, so "Master's" always satisfies "Bachelor's required") ----
 
 DEGREE_PATTERNS = [

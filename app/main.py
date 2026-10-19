@@ -420,6 +420,15 @@ async def find_jobs(req: JobSearchRequest, request: Request):
     return {"jobs": jobs.rank_by_fit(found, req.skills)}
 
 
+@app.get("/api/admin/health")
+async def admin_health(request: Request, refresh: bool = False):
+    """Owner check: every outside service, its key and its usage. Free read-only probes; never returns keys."""
+    if not is_admin(request):
+        raise HTTPException(401, "Admin only.")
+    from . import health
+    return await health.check(force=refresh)
+
+
 @app.get("/api/admin/bd-usage")
 async def bd_usage(request: Request):
     """Owner check on Bright Data job discovery: records used this month against the cap. Never returns the key."""

@@ -195,3 +195,14 @@ def test_job_match_carries_assessment_and_read_date():
     a = body["analysis"]
     assert a["assessment"]["decision"] == "provisional"  # one-line posting: too thin for a verdict
     assert body["job"]["fetched_at"] and body["job"]["sources"] == ["your paste"]
+
+
+def test_health_is_admin_only_and_never_returns_keys(admin, monkeypatch):
+    assert admin.get("/api/admin/health").status_code == 401
+    admin.post("/api/admin/login", json={"username": "owner", "password": "test-pass"})
+    monkeypatch.setenv("BRIGHTDATA_API_KEY", "")
+    monkeypatch.setenv("APIFY_API_TOKEN", "")
+    h = admin.get("/api/admin/health?refresh=1").json()
+    assert set(h["services"]) == {"AI model", "Supabase", "Bright Data", "Apify", "JobSpy"}
+    assert h["services"]["Bright Data"]["status"] == "off" and h["services"]["AI model"]["status"] == "off"  # demo, no keys
+    assert "test-pass" not in str(h)

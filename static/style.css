@@ -609,3 +609,12 @@ textarea { resize: vertical; }
 #appear-out .chips { margin: 6px 0 10px; }
 #smap > p.muted { margin-top: 10px; }
 @media (max-width: 600px) { .smap-row { grid-template-columns: minmax(0, 1fr) 60px; } .smap-row .smap-bar, .smap-row .share { display: none; } }
+
+/* service health (admin) */
+.health-dialog { width: min(460px, calc(100vw - 32px)); }
+.health-list { list-style: none; padding: 0; margin: 10px 0 16px; display: grid; gap: 10px; }
+.health-list li { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start; }
+.health-list .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; grid-row: span 2; }
+.dot.ok { background: var(--good); } .dot.error { background: var(--bad); } .dot.off { background: var(--border); }
+.health-list b { font-size: 14px; }
+.health-list span { font-size: 13px; color: var(--muted); }

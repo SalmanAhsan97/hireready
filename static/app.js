@@ -1058,12 +1058,27 @@ $("#history").addEventListener("click", async (e) => {
   } catch (err) { toast(err.message); }
 });
 
+// ---- Service health (admin): free read-only checks of every provider ----
+async function loadHealth(refresh = false) {
+  $("#health-list").innerHTML = "<li>Checking…</li>";
+  try {
+    const h = await api("/api/admin/health" + (refresh ? "?refresh=1" : ""));
+    $("#health-when").textContent = (h.healthy ? "All services working" : "Something needs attention") + ` · checked ${h.checked_at}`;
+    $("#health-list").innerHTML = Object.entries(h.services).map(([name, s]) =>
+      `<li><span class="dot ${esc(s.status)}"></span><b>${esc(name)}</b><span>${esc(s.detail)}</span></li>`).join("");
+  } catch (err) { $("#health-list").innerHTML = `<li>${esc(err.message)}</li>`; }
+}
+$("#health-btn").addEventListener("click", () => { $("#health-dialog").showModal(); loadHealth(); });
+$("#health-refresh").addEventListener("click", () => loadHealth(true));
+$("#health-close").addEventListener("click", () => $("#health-dialog").close());
+
 // ---- Owner sign-in (full version, no daily limits; the session is an HttpOnly cookie) ----
 function setAdmin(on) {
   state.admin = on;
   $("#admin-pill").hidden = !on;
   $("#admin-out").hidden = !on;
   $("#admin-btn").hidden = on || !state.adminLogin;
+  $("#health-btn").hidden = !on;
   if (on) $("#access-wrap").hidden = true;
   else if (state.accessRequired) $("#access-wrap").hidden = false;
   loadHistory();

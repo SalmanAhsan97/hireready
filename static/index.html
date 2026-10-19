@@ -32,10 +32,21 @@
       <div class="admin-bar">
         <span id="admin-pill" class="admin-pill" hidden>Admin · full access</span>
         <button type="button" class="btn ghost small" id="admin-btn" hidden>Admin sign-in</button>
+        <button type="button" class="btn ghost small" id="health-btn" hidden>Health</button>
         <button type="button" class="btn ghost small" id="admin-out" hidden>Sign out</button>
       </div>
     </div>
   </header>
+
+  <dialog id="health-dialog" class="admin-dialog health-dialog">
+    <h3>Service health</h3>
+    <p class="muted" id="health-when"></p>
+    <ul class="health-list" id="health-list"><li>Checking…</li></ul>
+    <div class="admin-actions">
+      <button type="button" class="btn ghost" id="health-refresh">Check again</button>
+      <button type="button" class="btn primary" id="health-close">Close</button>
+    </div>
+  </dialog>
 
   <dialog id="admin-dialog" class="admin-dialog">
     <form id="admin-form" method="dialog">

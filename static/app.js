@@ -587,7 +587,7 @@ function renderDiscover(a) {
   if (!d) return;
   const m = d.search_map, real = m.postings > 0;
   $("#smap-note").textContent = real
-    ? `Based on ${m.postings} recent postings for ${m.role}${m.country ? " in " + m.country : ""}. Essential = at least half the postings ask for it; useful = 20–50%.`
+    ? `Based on ${m.postings} recent postings${Object.keys(m.sources || {}).length ? " from " + Object.keys(m.sources).join(" + ") : ""} for ${m.role}${m.country ? " in " + m.country : ""}. Essential = at least half the postings ask for it; useful = 20–50%.`
     : `We couldn't read recent postings just now, so this is an estimated keyword list for ${m.role}, not counted from real postings.`;
   const shown = m.terms.filter((t) => t.label !== "noise"), noise = m.terms.length - shown.length;
   $("#smap").innerHTML = shown.map((t) => `<div class="smap-row">

@@ -312,7 +312,7 @@ async def linkedin_review(
             profile = await ai.profile_from_pdf_text(text)
         else:
             profile = await fetch_linkedin_profile(profile_url)
-        analysis = await ai.analyze_profile(profile, target_role, country)
+        analysis = await ai.analyze_profile(profile, target_role, country, allowed=full)  # only Pro/admin spend Bright Data records
     except JobFetchError as e:
         raise HTTPException(422, {"code": "profile_fetch_failed", "message": str(e)})
     except ai.AIError as e:
@@ -418,6 +418,16 @@ async def find_jobs(req: JobSearchRequest, request: Request):
     except jobs.JobSearchError as e:
         raise HTTPException(502, str(e))
     return {"jobs": jobs.rank_by_fit(found, req.skills)}
+
+
+@app.get("/api/admin/bd-usage")
+async def bd_usage(request: Request):
+    """Owner check on Bright Data job discovery: records used this month against the cap. Never returns the key."""
+    if not is_admin(request):
+        raise HTTPException(401, "Admin only.")
+    from . import linkedin_jobs
+    return {"enabled": linkedin_jobs.enabled(), "month": linkedin_jobs._month(),
+            "records": await linkedin_jobs.usage(), "cap": linkedin_jobs.monthly_cap(), "per_search": linkedin_jobs.LIMIT}
 
 
 class AppearancesRequest(BaseModel):

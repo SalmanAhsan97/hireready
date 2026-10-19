@@ -275,6 +275,7 @@ class SearchMap(BaseModel):
     role: str
     country: str = ""
     postings: int = 0  # how many real postings the map is built from; 0 = estimated keyword list
+    sources: dict[str, int] = {}  # postings per job board, e.g. {"LinkedIn": 12, "Indeed": 15}
     terms: List[SearchTerm] = []
 
 

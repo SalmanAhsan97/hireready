@@ -10,8 +10,11 @@ from app.models import LinkedInProfile, PostingFacts, PostingsFacts, ProfileExpe
 client = TestClient(main.app)
 
 
-def _posting(title, description):
-    return SimpleNamespace(title=title, description=description)
+_n = iter(range(10**6))
+
+
+def _posting(title, description, site="indeed", company=None):
+    return SimpleNamespace(title=title, description=description, site=site, company=company or f"Co {next(_n)}")
 
 
 def _facts(i, title="Marketing Manager", industry="SaaS", skills=(), tools=(), outcomes=()):
@@ -191,13 +194,13 @@ def test_search_map_falls_back_when_postings_fail(monkeypatch, live):
 
 def test_search_map_needs_enough_postings(monkeypatch, live):
     async def few(*a, **k):
-        return [_posting("X", "")] * (discover.MIN_POSTINGS - 1)
+        return [_posting("X", "") for _ in range(discover.MIN_POSTINGS - 1)]
     monkeypatch.setattr(jobs, "search", few)
     assert asyncio.run(ai.search_map("Few Role", "USA")) is None
 
 
 def test_search_map_reads_postings_once_then_uses_the_cache(monkeypatch, live):
-    postings = [_posting("Data Analyst", "SQL and Tableau")] * 6
+    postings = [_posting("Data Analyst", "SQL and Tableau") for _ in range(6)]
     calls = []
 
     async def found(*a, **k):
@@ -235,3 +238,138 @@ def test_linkedin_preview_locks_the_rewrites(monkeypatch):
 def test_linkedin_rejects_unknown_country():
     r = client.post("/api/linkedin", data={"profile_url": "https://www.linkedin.com/in/demo/", "country": "Atlantis"})
     assert r.status_code == 400
+
+
+# ---- LinkedIn postings via Bright Data (mocked: billed per record, never called in tests) ----
+
+from app import linkedin_jobs  # noqa: E402
+
+BD_RECORDS = [{"url": f"https://www.linkedin.com/jobs/view/{i}/", "job_title": "Data Analyst", "company_name": f"LI Co {i}",
+               "job_location": "Toronto", "job_summary": "SQL, Tableau and dashboards for finance."} for i in range(4)] + [{"error": "dead link"}]
+
+
+class FakeBD:
+    """Stands in for httpx.AsyncClient against Bright Data: trigger -> progress -> snapshot."""
+    calls: list = []
+    status = "ready"
+
+    def __init__(self, *a, **k):
+        self.headers = k.get("headers", {})
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, url, params=None, json=None):
+        FakeBD.calls.append(("trigger", params, json))
+        return SimpleNamespace(status_code=200, json=lambda: {"snapshot_id": "s_1"})
+
+    async def get(self, url, params=None):
+        FakeBD.calls.append(("get", url))
+        if "/progress/" in url:
+            return SimpleNamespace(json=lambda: {"status": FakeBD.status})
+        return SimpleNamespace(json=lambda: BD_RECORDS)
+
+
+@pytest.fixture
+def bd(monkeypatch, tmp_path):
+    monkeypatch.setenv("BRIGHTDATA_API_KEY", "test-key")
+    monkeypatch.setattr(linkedin_jobs.cache, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(linkedin_jobs.httpx, "AsyncClient", FakeBD)
+    async def no_wait(_):
+        pass
+    monkeypatch.setattr(linkedin_jobs, "asyncio", SimpleNamespace(sleep=no_wait))
+    FakeBD.calls, FakeBD.status = [], "ready"
+    return FakeBD
+
+
+def test_bd_discovery_is_off_without_a_key(monkeypatch):
+    monkeypatch.setenv("BRIGHTDATA_API_KEY", "")
+    assert not linkedin_jobs.enabled()
+    monkeypatch.setenv("BRIGHTDATA_API_KEY", "k")
+    assert linkedin_jobs.enabled()
+    monkeypatch.setenv("SCREENPROOF_BD_DISCOVERY", "0")
+    assert not linkedin_jobs.enabled()
+
+
+def test_bd_search_never_spends_for_free_requests(bd):
+    assert asyncio.run(linkedin_jobs.search("Data Analyst", "Canada", allowed=False)) == []
+    assert bd.calls == []
+
+
+def test_bd_search_counts_billed_records_and_caches(bd):
+    jobs_ = asyncio.run(linkedin_jobs.search("Data Analyst", "Canada", allowed=True))
+    assert len(jobs_) == 4 and jobs_[0].site == "linkedin"
+    trigger = bd.calls[0]
+    assert trigger[1]["discover_by"] == "keyword" and trigger[1]["limit_per_input"] == str(linkedin_jobs.LIMIT)
+    assert trigger[2] == [{"keyword": "Data Analyst", "location": "Canada", "time_range": "Past month"}]
+    assert asyncio.run(linkedin_jobs.usage()) == 4  # the error record isn't billed
+    bd.calls.clear()
+    assert len(asyncio.run(linkedin_jobs.search("Data Analyst", "Canada", allowed=False))) == 4  # cached: free to reuse
+    assert bd.calls == []
+
+
+def test_bd_search_stops_at_the_monthly_cap(bd, monkeypatch):
+    monkeypatch.setenv("SCREENPROOF_BD_MONTHLY_CAP", "10")
+    asyncio.run(linkedin_jobs._add_usage(1))
+    assert asyncio.run(linkedin_jobs.search("Analyst", "UK", allowed=True)) == []  # 1 + 15 > 10
+    assert bd.calls == []
+
+
+def test_bd_snapshot_still_running_is_collected_next_time(bd, monkeypatch):
+    monkeypatch.setattr(linkedin_jobs, "WAIT_S", 0)
+    bd.status = "running"
+    assert asyncio.run(linkedin_jobs.search("Data Analyst", "USA", allowed=True)) == []
+    bd.status = "ready"
+    bd.calls.clear()
+    assert len(asyncio.run(linkedin_jobs.search("Data Analyst", "USA", allowed=True))) == 4
+    assert not any(c[0] == "trigger" for c in bd.calls)  # picked up the same paid snapshot, no new trigger
+
+
+def test_bd_key_never_reaches_the_log(bd, monkeypatch, caplog):
+    async def boom(self, *a, **k):
+        raise linkedin_jobs.httpx.ConnectError("Bearer test-key refused")
+    monkeypatch.setattr(FakeBD, "post", boom)
+    assert asyncio.run(linkedin_jobs.search("Role", "India", allowed=True)) == []
+    assert "test-key" not in caplog.text
+
+
+def test_merge_postings_dedupes_title_and_company():
+    a = [_posting("Data Analyst", "x", site="linkedin", company="Acme")]
+    b = [_posting("Data analyst", "y", company="ACME"), _posting("Data Analyst", "z", company="Beta")]
+    merged = ai.merge_postings(a, b)
+    assert [p.site for p in merged] == ["linkedin", "indeed"]
+
+
+def test_search_map_combines_linkedin_and_indeed_for_pro_only(monkeypatch, live):
+    li = [_posting("Data Analyst", "SQL", site="linkedin") for _ in range(3)]
+    ind = [_posting("Data Analyst", "SQL") for _ in range(3)]
+    seen = []
+
+    async def li_search(role, country, allowed):
+        seen.append(allowed)
+        return li if allowed else []
+
+    async def found(*a, **k):
+        return ind
+
+    async def parse(content, schema, effort, writing=False):
+        return PostingsFacts(postings=[_facts(i, title="Data Analyst", tools=["SQL"]) for i in range(1, 7)])
+
+    monkeypatch.setenv("BRIGHTDATA_API_KEY", "k")
+    monkeypatch.setattr(linkedin_jobs, "search", li_search)
+    monkeypatch.setattr(jobs, "search", found)
+    monkeypatch.setattr(ai, "_parse", parse)
+    free = asyncio.run(ai.search_map("Combo Analyst", "Canada", allowed=False))
+    assert free is None and seen == [False]  # 3 Indeed postings aren't enough, and no records were spent
+    pro = asyncio.run(ai.search_map("Combo Analyst", "Canada", allowed=True))
+    assert pro.postings == 6 and pro.sources == {"LinkedIn": 3, "Indeed": 3}
+    seen.clear()
+    assert asyncio.run(ai.search_map("Combo Analyst", "Canada", allowed=False)) == pro  # free reuse of the cached map
+    assert seen == []
+
+
+def test_bd_usage_endpoint_is_admin_only():
+    assert client.get("/api/admin/bd-usage").status_code == 401

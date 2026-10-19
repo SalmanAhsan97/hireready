@@ -618,6 +618,7 @@ async def profile_from_pdf_text(text: str) -> LinkedInProfile:
 
 
 SEARCH_MAP_POSTINGS = 15
+MAX_MAP_POSTINGS = 30
 SEARCH_MAP_CACHE_S = 7 * 86400
 POSTING_CHARS = 3000
 
@@ -629,18 +630,47 @@ def guess_country(location: str) -> str:
     return next((c for c in COUNTRIES if c.lower() in low), None) or next((v for k, v in aliases.items() if k in low), "USA")
 
 
-async def search_map(role: str, country: str) -> SearchMap | None:
-    """What recruiters search for this role, counted over real recent postings. One model call reads the postings;
-    the counting is code. Cached per role+country for a week. None when postings can't be fetched."""
-    from . import jobs
-    key = _key("search-map-v1", " ".join(role.lower().split()), country)
-    cached = await cache.get("search-maps", key, SearchMap, max_age_s=SEARCH_MAP_CACHE_S)
+def merge_postings(*groups: list) -> list:
+    """One list, first group first, without the same job twice (same title at the same company)."""
+    out, seen = [], set()
+    for group in groups:
+        for p in group:
+            k = (scoring._norm(p.title), scoring._norm(p.company))
+            if k not in seen:
+                seen.add(k)
+                out.append(p)
+    return out[:MAX_MAP_POSTINGS]
+
+
+async def search_map(role: str, country: str, allowed: bool = False) -> SearchMap | None:
+    """What recruiters search for this role, counted over real recent postings (Indeed, plus LinkedIn via Bright
+    Data when enabled). One model call reads the postings; the counting is code. Cached per role+country for a week.
+    allowed: this request may spend Bright Data records (Pro/admin). None when there aren't enough postings."""
+    from . import jobs, linkedin_jobs
+    base = " ".join(role.lower().split())
+    li_key, in_key = _key("search-map-v2", base, country, "li"), _key("search-map-v2", base, country, "in")
+    cached = await cache.get("search-maps", li_key, SearchMap, max_age_s=SEARCH_MAP_CACHE_S)
     if cached:
         return cached
-    try:
-        postings = await jobs.search(role, "", country, limit=SEARCH_MAP_POSTINGS)
-    except jobs.JobSearchError:
-        return None
+
+    async def indeed() -> list:
+        try:
+            return await jobs.search(role, "", country, limit=SEARCH_MAP_POSTINGS)
+        except jobs.JobSearchError:
+            return []
+
+    if allowed and linkedin_jobs.enabled():
+        found_in, found_li = await asyncio.gather(indeed(), linkedin_jobs.search(role, country, allowed=True))
+    else:
+        found_li = await linkedin_jobs.search(role, country, allowed=False)  # only postings already paid for
+        found_in = None
+    if not found_li:
+        cached = await cache.get("search-maps", in_key, SearchMap, max_age_s=SEARCH_MAP_CACHE_S)
+        if cached:
+            return cached
+    if found_in is None:
+        found_in = await indeed()
+    postings = merge_postings(found_li, found_in)
     if len(postings) < discover.MIN_POSTINGS:
         return None
     blocks = "\n\n".join(f'<posting n="{i}">\nTitle: {p.title}\n{p.description[:POSTING_CHARS]}\n</posting>' for i, p in enumerate(postings, 1))
@@ -649,7 +679,11 @@ async def search_map(role: str, country: str) -> SearchMap | None:
     except AIError:
         return None  # the review still runs on the estimated keyword list
     smap = discover.build_search_map(role, country, postings, facts.postings)
-    await cache.put("search-maps", key, smap)
+    names = {"linkedin": "LinkedIn", "indeed": "Indeed"}
+    for p in postings:
+        name = names.get(p.site, p.site.title() or "Other")
+        smap.sources[name] = smap.sources.get(name, 0) + 1
+    await cache.put("search-maps", li_key if found_li else in_key, smap)
     return smap
 
 
@@ -658,7 +692,9 @@ def _demo_search_map(role: str, country: str) -> SearchMap:
     from . import demo
     from .models import PostingFacts
     postings = [SimpleNamespace(title=t, description=d) for t, d in demo.DEMO_POSTINGS]
-    return discover.build_search_map(role, country, postings, [PostingFacts.model_validate(f) for f in demo.DEMO_POSTING_FACTS])
+    smap = discover.build_search_map(role, country, postings, [PostingFacts.model_validate(f) for f in demo.DEMO_POSTING_FACTS])
+    smap.sources = {"Indeed": len(postings)}
+    return smap
 
 
 def _map_block(smap: SearchMap) -> str:
@@ -666,7 +702,7 @@ def _map_block(smap: SearchMap) -> str:
     return f"<search_map postings=\"{smap.postings}\">\n{json.dumps(terms, indent=1)}\n</search_map>"
 
 
-async def analyze_profile(profile: LinkedInProfile, target_role: str, country: str = "") -> Analysis:
+async def analyze_profile(profile: LinkedInProfile, target_role: str, country: str = "", allowed: bool = False) -> Analysis:
     """Same split as the resume: code scores the profile's facts and runs the recruiter searches, the model
     explains and writes the rewrites (which code then checks)."""
     role = target_role.strip() or (profile.experiences[0].title if profile.experiences else "") or profile.headline[:60]
@@ -674,7 +710,7 @@ async def analyze_profile(profile: LinkedInProfile, target_role: str, country: s
     if demo_mode():
         smap = _demo_search_map(role, country)
     else:
-        smap = await search_map(role, country)
+        smap = await search_map(role, country, allowed)
         if smap is None:
             smap = discover.estimated_map(role, await role_keywords(role, "mid"))
     weighted = discover.scored_terms(smap)

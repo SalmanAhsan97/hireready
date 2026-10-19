@@ -1,4 +1,4 @@
--- HireReady (separate app sharing this project). Server-only access via the service role key:
+-- Screenproof (separate app sharing this project; tables keep the original hireready_ prefix). Server-only access via the service role key:
 -- RLS is on with no policies, so anon/authenticated (publishable key) users can't read or write these.
 
 create table if not exists public.hireready_cache (

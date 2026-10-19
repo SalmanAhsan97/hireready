@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from . import cache
 
-log = logging.getLogger("hireready.jobs")
+log = logging.getLogger("screenproof.jobs")
 
 SITES = [s.strip() for s in os.getenv("HIREREADY_JOB_SITES", "indeed").split(",") if s.strip()]
 HOURS_OLD = int(os.getenv("HIREREADY_JOB_HOURS_OLD", "336"))  # two weeks

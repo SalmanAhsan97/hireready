@@ -1,6 +1,6 @@
 """Storage for fetched postings, Claude extractions and analysis history.
 
-Uses Supabase (tables hireready_cache / hireready_analyses) when SUPABASE_URL and
+Uses Supabase (tables hireready_cache / hireready_analyses, named before the rename to Screenproof) when SUPABASE_URL and
 SUPABASE_SERVICE_ROLE_KEY are set, so cached facts survive redeploys and are shared between instances.
 Otherwise, or if Supabase is unreachable, falls back to JSON files in .cache/.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel
 
-log = logging.getLogger("hireready.cache")
+log = logging.getLogger("screenproof.cache")
 
 CACHE_DIR = Path(os.getenv("HIREREADY_CACHE", Path(__file__).resolve().parent.parent / ".cache"))
 

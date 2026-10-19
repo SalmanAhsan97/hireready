@@ -19,7 +19,7 @@ UA = (
 )
 
 
-log = logging.getLogger("hireready.fetch")
+log = logging.getLogger("screenproof.fetch")
 
 
 class JobFetchError(Exception):

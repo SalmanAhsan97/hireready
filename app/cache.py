@@ -1,6 +1,6 @@
 """Storage for fetched postings, Claude extractions and analysis history.
 
-Uses Supabase (tables hireready_cache / hireready_analyses, named before the rename to Screenproof) when SUPABASE_URL and
+Uses Supabase (tables screenproof_cache / screenproof_analyses / screenproof_usage) when SUPABASE_URL and
 SUPABASE_SERVICE_ROLE_KEY are set, so cached facts survive redeploys and are shared between instances.
 Otherwise, or if Supabase is unreachable, falls back to JSON files in .cache/.
 """
@@ -14,9 +14,11 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel
 
+from .settings import env
+
 log = logging.getLogger("screenproof.cache")
 
-CACHE_DIR = Path(os.getenv("HIREREADY_CACHE", Path(__file__).resolve().parent.parent / ".cache"))
+CACHE_DIR = Path(env("CACHE", Path(__file__).resolve().parent.parent / ".cache"))
 
 _http: httpx.AsyncClient | None = None
 
@@ -42,7 +44,7 @@ async def get(kind: str, key: str, schema: type[BaseModel], max_age_s: float | N
     if supabase_enabled():
         try:
             resp = await _sb().get(
-                "/hireready_cache",
+                "/screenproof_cache",
                 params={"kind": f"eq.{kind}", "key": f"eq.{key}", "select": "value,updated_at"},
             )
             resp.raise_for_status()
@@ -63,7 +65,7 @@ async def put(kind: str, key: str, value: BaseModel):
     if supabase_enabled():
         try:
             resp = await _sb().post(
-                "/hireready_cache",
+                "/screenproof_cache",
                 params={"on_conflict": "kind,key"},
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
                 json={
@@ -106,7 +108,7 @@ async def save_analysis(row: dict):
     if not supabase_enabled():
         return
     try:
-        resp = await _sb().post("/hireready_analyses", headers={"Prefer": "return=minimal"}, json=row)
+        resp = await _sb().post("/screenproof_analyses", headers={"Prefer": "return=minimal"}, json=row)
         resp.raise_for_status()
     except httpx.HTTPError as e:
         log.warning("Saving analysis to Supabase failed: %r", e)
@@ -125,7 +127,7 @@ async def save_history(key: str, value: dict):
     if supabase_enabled():
         try:
             resp = await _sb().post(
-                "/hireready_cache",
+                "/screenproof_cache",
                 params={"on_conflict": "kind,key"},
                 headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
                 json={"kind": HISTORY, "key": key, "value": value, "updated_at": now},
@@ -147,7 +149,7 @@ async def list_history(limit: int = 30) -> list[dict]:
     if supabase_enabled():
         try:
             select = ",".join(["key", "updated_at", *(f"{f}:value->>{f}" for f in HISTORY_FIELDS)])
-            resp = await _sb().get("/hireready_cache", params={
+            resp = await _sb().get("/screenproof_cache", params={
                 "kind": f"eq.{HISTORY}", "select": select, "order": "updated_at.desc", "limit": str(limit)})
             resp.raise_for_status()
             return [{"key": r["key"], "last_used": r["updated_at"], **{f: r.get(f) for f in HISTORY_FIELDS}} for r in resp.json()]
@@ -167,7 +169,7 @@ async def list_history(limit: int = 30) -> list[dict]:
 async def get_history(key: str) -> dict | None:
     if supabase_enabled():
         try:
-            resp = await _sb().get("/hireready_cache", params={"kind": f"eq.{HISTORY}", "key": f"eq.{key}", "select": "value"})
+            resp = await _sb().get("/screenproof_cache", params={"kind": f"eq.{HISTORY}", "key": f"eq.{key}", "select": "value"})
             resp.raise_for_status()
             rows = resp.json()
             return rows[0]["value"] if rows else None
@@ -187,7 +189,7 @@ async def set_history_outcome(key: str, outcome: str) -> bool:
     item.update(outcome=outcome, outcome_at=datetime.now(timezone.utc).isoformat())
     if supabase_enabled():
         try:
-            resp = await _sb().patch("/hireready_cache", params={"kind": f"eq.{HISTORY}", "key": f"eq.{key}"},
+            resp = await _sb().patch("/screenproof_cache", params={"kind": f"eq.{HISTORY}", "key": f"eq.{key}"},
                                      headers={"Prefer": "return=minimal"}, json={"value": item})
             resp.raise_for_status()
             return True
@@ -215,9 +217,9 @@ async def count_and_record_usage(client: str, action: str, window_s: float = 864
     if supabase_enabled():
         try:
             since = datetime.fromtimestamp(time.time() - window_s, timezone.utc).isoformat()
-            (await _sb().post("/hireready_usage", headers={"Prefer": "return=minimal"}, json={"client": client, "action": action})).raise_for_status()
+            (await _sb().post("/screenproof_usage", headers={"Prefer": "return=minimal"}, json={"client": client, "action": action})).raise_for_status()
             resp = await _sb().get(
-                "/hireready_usage",
+                "/screenproof_usage",
                 params={"client": f"eq.{client}", "created_at": f"gte.{since}", "action": f"in.({','.join(group)})", "select": "id"},
                 headers={"Prefer": "count=exact", "Range": "0-0"},
             )

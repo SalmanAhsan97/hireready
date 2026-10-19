@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .settings import env
 from . import ai, cache, jobs, pdf
 from .models import Analysis, ChatMessage, Job
 from .parsing import JobFetchError, extract_resume, extract_resume_text, fetch_job, fetch_linkedin_profile, linkedin_sources
@@ -25,21 +26,21 @@ MAX_UPLOAD = 5 * 1024 * 1024
 app = FastAPI(title="Screenproof")
 
 # Public deploys: require a shared access code and cap paid work (scrapes + Claude calls) per visitor per day.
-ACCESS_CODE = os.getenv("HIREREADY_ACCESS_CODE", "")
-DAILY_LIMIT = int(os.getenv("HIREREADY_DAILY_LIMIT", "15"))  # analyses + application kits
-CHAT_LIMIT = int(os.getenv("HIREREADY_CHAT_LIMIT", "40"))  # resume-chat messages
-JOBS_LIMIT = int(os.getenv("HIREREADY_JOBS_LIMIT", "10"))  # job-board searches
-_SALT = os.getenv("HIREREADY_CLIENT_SALT", ACCESS_CODE or "hireready")
+ACCESS_CODE = env("ACCESS_CODE", "")
+DAILY_LIMIT = int(env("DAILY_LIMIT", "15"))  # analyses + application kits
+CHAT_LIMIT = int(env("CHAT_LIMIT", "40"))  # resume-chat messages
+JOBS_LIMIT = int(env("JOBS_LIMIT", "10"))  # job-board searches
+_SALT = env("CLIENT_SALT", ACCESS_CODE or "screenproof")
 
 
-PREVIEW_LIMIT = int(os.getenv("HIREREADY_PREVIEW_LIMIT", "3"))  # free previews per visitor per day
-CONTACT_EMAIL = os.getenv("HIREREADY_CONTACT_EMAIL", "rnwedesign@gmail.com")
+PREVIEW_LIMIT = int(env("PREVIEW_LIMIT", "3"))  # free previews per visitor per day
+CONTACT_EMAIL = env("CONTACT_EMAIL", "rnwedesign@gmail.com")
 
 
 # Owner sign-in: full version with no daily limits. Credentials live only in the environment.
-ADMIN_USER = os.getenv("HIREREADY_ADMIN_USER", "")
-ADMIN_PASSWORD = os.getenv("HIREREADY_ADMIN_PASSWORD", "")
-ADMIN_COOKIE = "hr_admin"
+ADMIN_USER = env("ADMIN_USER", "")
+ADMIN_PASSWORD = env("ADMIN_PASSWORD", "")
+ADMIN_COOKIE = "sp_admin"
 ADMIN_MAX_AGE = 30 * 24 * 3600
 _login_failures: dict[str, int] = {}
 

@@ -128,7 +128,14 @@ function showError(msg) {
 }
 
 const store = {
-  get: (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+  // keys are screenproof_*; a value saved under the pre-rename hireready_* key is carried over once
+  get: (k) => {
+    try {
+      const old = k.replace(/^screenproof_/, "hireready_"), v = localStorage.getItem(k);
+      if (v === null && localStorage.getItem(old) !== null) { localStorage.setItem(k, localStorage.getItem(old)); localStorage.removeItem(old); }
+      return localStorage.getItem(k) || "";
+    } catch { return ""; }
+  },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 };
 const accessHeaders = () => {
@@ -288,7 +295,7 @@ async function submitLinkedIn() {
     const data = await postForm("/api/linkedin", fd, (f) => loader.setUpload(f));
     await loader.finish();
     ok = true;
-    store.set("hireready_access_code", $("#access_code").value.trim());
+    store.set("screenproof_access_code", $("#access_code").value.trim());
     Object.assign(state, { demo: data.demo, preview: !!data.preview, locked: data.locked, resumeText: "", kit: null,
       job: { url: data.profile.url, description: "", title: "", company: "" }, analysis: data.analysis });
     renderAnalysis();
@@ -376,7 +383,7 @@ async function submitCompare() {
     const data = await postForm("/api/compare", fd, (f) => loader.setUpload(f));
     await loader.finish();
     ok = true;
-    store.set("hireready_access_code", $("#access_code").value.trim());
+    store.set("screenproof_access_code", $("#access_code").value.trim());
     renderComparison(data.comparison, data.job);
   } catch (err) {
     showError(err.message);
@@ -414,7 +421,7 @@ $("#analyze-form").addEventListener("submit", async (e) => {
     const data = await postForm("/api/analyze", fd, (f) => loader.setUpload(f));
     await loader.finish();
     ok = true;
-    store.set("hireready_access_code", $("#access_code").value.trim());
+    store.set("screenproof_access_code", $("#access_code").value.trim());
     state.demo = data.demo;
     state.preview = !!data.preview;
     state.locked = data.locked;
@@ -707,8 +714,8 @@ $("#chat-pdf").addEventListener("click", () => downloadResume(state.chat.md || s
 // ---- Jobs that fit (resume-only score) ----
 $("#jobs-btn").addEventListener("click", async () => {
   const location = $("#jobs_location").value.trim(), country = $("#jobs_country").value;
-  store.set("hireready_jobs_location", location);
-  store.set("hireready_jobs_country", country);
+  store.set("screenproof_jobs_location", location);
+  store.set("screenproof_jobs_country", country);
   const btn = $("#jobs-btn"), list = $("#jobs-list");
   btn.disabled = true;
   btn.textContent = "Searching…";
@@ -859,7 +866,7 @@ async function downloadResume(markdownText, suffix, format) {
 (() => {
   const splash = $("#splash");
   let seen = false;
-  try { seen = sessionStorage.getItem("hr_splash") === "1"; sessionStorage.setItem("hr_splash", "1"); } catch {}
+  try { seen = sessionStorage.getItem("sp_splash") === "1"; sessionStorage.setItem("sp_splash", "1"); } catch {}
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const minMs = reduce ? 200 : seen ? 700 : 1700;
   const t0 = performance.now();
@@ -975,8 +982,8 @@ $("#admin-out").addEventListener("click", async () => {
   toast("Signed out");
 });
 
-$("#access_code").value = store.get("hireready_access_code");
-$("#jobs_location").value = store.get("hireready_jobs_location");
+$("#access_code").value = store.get("screenproof_access_code");
+$("#jobs_location").value = store.get("screenproof_jobs_location");
 api("/api/status").then((s) => {
   $("#demo-pill").hidden = !s.demo;
   state.accessRequired = s.access_code_required;
@@ -984,7 +991,7 @@ api("/api/status").then((s) => {
   if (s.access_code_required) $("#access-wrap").hidden = false;
   fetch("/api/admin").then((r) => r.json()).then((a) => setAdmin(a.admin)).catch(() => setAdmin(false));
   if (s.contact_email) state.contact = s.contact_email;
-  const saved = store.get("hireready_jobs_country");
+  const saved = store.get("screenproof_jobs_country");
   $("#jobs_country").innerHTML = (s.job_countries || []).map((c) => `<option ${c === saved ? "selected" : ""}>${esc(c)}</option>`).join("");
   $$(".contact-link").forEach((l) => { l.textContent = state.contact; l.href = mailto(); });
   $$(".contact-btn").forEach((l) => (l.href = mailto()));

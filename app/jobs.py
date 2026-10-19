@@ -12,12 +12,13 @@ import os
 
 from pydantic import BaseModel
 
+from .settings import env
 from . import cache
 
 log = logging.getLogger("screenproof.jobs")
 
-SITES = [s.strip() for s in os.getenv("HIREREADY_JOB_SITES", "indeed").split(",") if s.strip()]
-HOURS_OLD = int(os.getenv("HIREREADY_JOB_HOURS_OLD", "336"))  # two weeks
+SITES = [s.strip() for s in env("JOB_SITES", "indeed").split(",") if s.strip()]
+HOURS_OLD = int(env("JOB_HOURS_OLD", "336"))  # two weeks
 CACHE_S = 6 * 3600
 TIMEOUT_S = 25
 MAX_DESCRIPTION = 15000

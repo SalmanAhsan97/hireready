@@ -17,7 +17,7 @@ Screenproof is a web app for job seekers. The free tier earns trust with an hone
 | File warnings (hidden text) | ✓ | ✓ | ✓ |
 | Requirement check with quoted evidence | — | ✓ | ✓ |
 | All edits, strengths, gaps, red flags, missing keywords | first of each | ✓ | ✓ |
-| Writing by the premium model (`HIREREADY_PREMIUM_MODEL`) | — | ✓ | ✓ |
+| Writing by the premium model (`SCREENPROOF_PREMIUM_MODEL`) | — | ✓ | ✓ |
 | Resume chat and application kit | — | ✓ | ✓ |
 | .docx and PDF export | — | ✓ | ✓ |
 | **Resume comparison** for one job (2–4 resumes) | — | ✓ | ✓ |
@@ -26,7 +26,7 @@ Screenproof is a web app for job seekers. The free tier earns trust with an hone
 | Saved resumes & jobs (cloud history, Preview, last used) | — | — | ✓ |
 | Daily limits (defaults) | 3 previews | 15 runs, 40 chat, 10 job searches | none |
 
-Limits are environment variables (`HIREREADY_PREVIEW_LIMIT`, `HIREREADY_DAILY_LIMIT`, `HIREREADY_CHAT_LIMIT`, `HIREREADY_JOBS_LIMIT`), so plans can be tuned without code changes.
+Limits are environment variables (`SCREENPROOF_PREVIEW_LIMIT`, `SCREENPROOF_DAILY_LIMIT`, `SCREENPROOF_CHAT_LIMIT`, `SCREENPROOF_JOBS_LIMIT`), so plans can be tuned without code changes.
 
 ## Resume comparison (Pro)
 
@@ -57,7 +57,7 @@ It makes no extra AI call for the verdict. Each resume counts as one run toward 
 
 ## Access today and rollout
 
-- **Today:** Pro is unlocked with an access code issued on request (`HIREREADY_ACCESS_CODE`). The owner signs in from the header (`HIREREADY_ADMIN_USER` / `HIREREADY_ADMIN_PASSWORD`). Locked sections are removed server-side, not just hidden.
+- **Today:** Pro is unlocked with an access code issued on request (`SCREENPROOF_ACCESS_CODE`). The owner signs in from the header (`SCREENPROOF_ADMIN_USER` / `SCREENPROOF_ADMIN_PASSWORD`). Locked sections are removed server-side, not just hidden.
 - **Next:** self-serve subscriptions (checkout plus per-user accounts) replace the shared access code, so each subscriber gets their own history and limits.
 - **Later:** team plans for career coaches and recruiters who compare many resumes for one role.
 

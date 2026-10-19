@@ -16,6 +16,7 @@ import anthropic
 import httpx
 from pydantic import ValidationError
 
+from .settings import env
 from . import cache, scoring
 from .models import (
     Analysis,
@@ -36,14 +37,14 @@ from .models import (
     RoleKeywords,
 )
 
-MODEL = os.getenv("HIREREADY_MODEL", "claude-opus-5-5")
-GEMINI_MODEL = os.getenv("HIREREADY_GEMINI_MODEL", "gemini-flash-latest")
-GEMINI_FALLBACK = os.getenv("HIREREADY_GEMINI_FALLBACK", "gemini-flash-lite-latest")
+MODEL = env("MODEL", "claude-opus-5-5")
+GEMINI_MODEL = env("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_FALLBACK = env("GEMINI_FALLBACK", "gemini-flash-lite-latest")
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models"
 # Paid plans: a stronger model for the writing (rationales, rewrites, chat, application kit), e.g.
 # "claude-opus-5-5" or "gemini-pro-latest". Fact extraction always uses the standard model, so a resume's
 # score never depends on the plan. Empty = everyone gets the standard model.
-PREMIUM_MODEL = os.getenv("HIREREADY_PREMIUM_MODEL", "").strip()
+PREMIUM_MODEL = env("PREMIUM_MODEL", "").strip()
 _premium: ContextVar[bool] = ContextVar("premium", default=False)
 
 
@@ -71,7 +72,7 @@ def model_name() -> str:
 
 
 def demo_mode() -> bool:
-    return os.getenv("HIREREADY_DEMO") == "1" or provider() is None
+    return env("DEMO") == "1" or provider() is None
 
 
 def client() -> anthropic.AsyncAnthropic:
@@ -241,9 +242,9 @@ def _job_block(job: Job) -> str:
 
 # ---- Extraction cache ----
 
-EXTRACT_VERSION = "4"
+EXTRACT_VERSION = "4"  # bump when the extraction prompts change, to invalidate cached facts
 # Readings per resume+job pair, majority-voted (1 = single read). Costs that many model calls on a pair's first read only.
-EVIDENCE_VOTES = max(1, int(os.getenv("HIREREADY_EVIDENCE_VOTES", "3")))  # bump when the extraction prompts change, to invalidate cached facts
+EVIDENCE_VOTES = max(1, int(env("EVIDENCE_VOTES", "3")))
 
 
 def _key(*parts: str) -> str:

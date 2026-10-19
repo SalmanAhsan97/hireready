@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from docx import Document
 from pypdf import PdfReader
 
+from .settings import env
 from . import cache
 from .models import Job, LinkedInProfile, ProfileExperience
 
@@ -236,7 +237,7 @@ def _clean(el) -> str:
     return el.get_text(" ", strip=True) if el else ""
 
 
-POSTING_TTL_S = float(os.getenv("HIREREADY_POSTING_TTL_HOURS", "168")) * 3600
+POSTING_TTL_S = float(env("POSTING_TTL_HOURS", "168")) * 3600
 
 
 async def fetch_job(url: str, premium: bool = True) -> Job:

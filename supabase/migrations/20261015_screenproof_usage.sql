@@ -1,4 +1,4 @@
--- Per-client usage log for Screenproof's daily limit (table keeps the original hireready_ prefix). Server-only (service role), like the other hireready_ tables.
+-- Per-client usage log for Screenproof's daily limit. Renamed to screenproof_usage in 20261019_screenproof_rename.sql. Server-only (service role), like the other hireready_ tables.
 create table if not exists public.hireready_usage (
   id bigint generated always as identity primary key,
   created_at timestamptz not null default now(),

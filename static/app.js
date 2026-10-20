@@ -528,6 +528,8 @@ function renderAnalysis() {
 
   $("#kw-matched").innerHTML = a.matched_keywords.map((k) => `<span class="chip">${esc(k)}</span>`).join("") || "<small>None found</small>";
   $("#kw-missing").innerHTML = a.missing_keywords.map((k) => `<span class="chip">${esc(k)}</span>`).join("") || "<small>Nothing major missing</small>";
+  $("#kw-basis").hidden = !a.keyword_basis;
+  $("#kw-basis").textContent = a.keyword_basis || "";
   listInto("#strengths", a.strengths, "—");
   listInto("#gaps", a.gaps, "No major gaps");
   listInto("#red-flags", a.red_flags, "None spotted");
@@ -585,9 +587,12 @@ function renderDiscover(a) {
   const d = a.discover, box = $("#discover");
   box.hidden = !d;
   if (!d) return;
-  const m = d.search_map, real = m.postings > 0;
+  const m = d.search_map, real = m.postings > 0, lib = (m.sources || {}).Library || 0;
+  const boards = Object.keys(m.sources || {}).filter((s) => s !== "Library");
   $("#smap-note").textContent = real
-    ? `Based on ${m.postings} recent postings${Object.keys(m.sources || {}).length ? " from " + Object.keys(m.sources).join(" + ") : ""} for ${m.role}${m.country ? " in " + m.country : ""}. Essential = at least half the postings ask for it; useful = 20–50%.`
+    ? (lib ? `Based on ${m.postings} postings incl. ${lib} from the library` + (boards.length ? ` (the rest from ${boards.join(" + ")})` : "")
+      : `Based on ${m.postings} recent postings${boards.length ? " from " + boards.join(" + ") : ""}`) +
+      ` for ${m.role}${m.country ? " in " + m.country : ""}. Essential = at least half the postings ask for it; useful = 20–50%.`
     : `We couldn't read recent postings just now, so this is an estimated keyword list for ${m.role}, not counted from real postings.`;
   const shown = m.terms.filter((t) => t.label !== "noise"), noise = m.terms.length - shown.length;
   $("#smap").innerHTML = shown.map((t) => `<div class="smap-row">
@@ -1072,6 +1077,53 @@ $("#health-btn").addEventListener("click", () => { $("#health-dialog").showModal
 $("#health-refresh").addEventListener("click", () => loadHealth(true));
 $("#health-close").addEventListener("click", () => $("#health-dialog").close());
 
+// ---- Data library (admin): imported postings, calibration by fit band, the fact vault ----
+async function loadData() {
+  const body = $("#data-body");
+  try {
+    const d = await api("/api/admin/data");
+    const c = d.calibration;
+    const roles = d.postings.roles.map(([r, n]) => `${esc(r)} (${n})`).join(", ");
+    const bandRows = c.bands.map((b) => `<tr><td>${esc(b.band)}</td><td>${esc(b.range)}</td><td>${b.outcomes}</td>
+      <td>${b.rate === null ? "–" : b.rate + "%"}</td><td>${b.pending}</td><td>${b.enough ? "yes" : "no"}</td></tr>`).join("");
+    const vault = d.vault.map((v) => `<li><b>${esc(v.kind)}</b> · ${esc(v.status)}${v.applies_to ? " · " + esc(v.applies_to) : ""}
+      <span>${esc(v.claim)}${v.max_mentions !== null && v.max_mentions !== undefined ? ` (at most ${v.max_mentions}×)` : ""}${v.correction ? " → " + esc(v.correction) : ""}</span></li>`).join("");
+    const imports = d.imports.map((i) => `<li>${esc(i.filename)} · ${esc(i.kind)} · ${esc((i.created_at || "").slice(0, 10))}</li>`).join("");
+    body.innerHTML = `
+      <h4>Job-posting library</h4>
+      <p class="small-note">${d.postings.total} postings stored (${esc(d.store)}).${roles ? " Top roles: " + roles + "." : ""}
+        A role needs ${d.postings.min_for_keywords}+ postings before they lift its keyword list.</p>
+      <h4>Calibration</h4>
+      <p class="small-note">Bands in effect: <b>${esc(c.version)}</b> (${c.cuts.join(" / ")}). ${c.total} outcomes; a band needs ${c.min} resolved outcomes before it can change anything.</p>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Band</th><th>Scores</th><th>Outcomes</th><th>Callback</th><th>Pending</th><th>Enough</th></tr></thead>
+        <tbody>${bandRows}</tbody></table></div>
+      <h4>Fact vault <span class="muted">(owner only)</span></h4>
+      ${vault ? `<ul class="data-list">${vault}</ul>` : `<p class="small-note muted">Empty.</p>`}
+      ${imports ? `<h4>Recent imports</h4><ul class="data-list">${imports}</ul>` : ""}`;
+  } catch (err) { body.innerHTML = `<p>${esc(err.message)}</p>`; }
+}
+$("#data-btn").addEventListener("click", () => { $("#import-result").hidden = true; $("#data-dialog").showModal(); loadData(); });
+$("#data-close").addEventListener("click", () => $("#data-dialog").close());
+$("#import-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const file = $("#import_file").files[0], out = $("#import-result");
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("project", $("#import_project").value);
+  $("#import-go").disabled = true;
+  out.hidden = false;
+  out.textContent = "Importing… large exports take a few minutes.";
+  try {
+    const r = await api("/api/admin/import", { method: "POST", body: fd });
+    out.textContent = r.skipped ? r.reason
+      : `Imported ${r.file}: ${r.postings_new} new postings (${r.postings_found} found), ${r.outcomes_new} new outcomes ` +
+        `(${r.applications_scorable} of ${r.applications_found} applications had posting + resume text), ${r.vault_new} new vault entries.`;
+    loadData();
+  } catch (err) { out.textContent = err.message; }
+  $("#import-go").disabled = false;
+});
+
 // ---- Owner sign-in (full version, no daily limits; the session is an HttpOnly cookie) ----
 function setAdmin(on) {
   state.admin = on;
@@ -1079,6 +1131,7 @@ function setAdmin(on) {
   $("#admin-out").hidden = !on;
   $("#admin-btn").hidden = on || !state.adminLogin;
   $("#health-btn").hidden = !on;
+  $("#data-btn").hidden = !on;
   if (on) $("#access-wrap").hidden = true;
   else if (state.accessRequired) $("#access-wrap").hidden = false;
   loadHistory();

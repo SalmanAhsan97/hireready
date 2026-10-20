@@ -72,6 +72,7 @@ def require_access(request: Request):
 async def plan_for_request(request: Request, call_next):
     # paid requests get the premium model for writing; scoring is identical on every plan
     ai.set_plan(has_full_access(request))
+    ai.set_owner(is_admin(request))  # only the owner's kit and chat edits read the fact vault
     return await call_next(request)
 
 
@@ -437,6 +438,47 @@ async def bd_usage(request: Request):
     from . import linkedin_jobs
     return {"enabled": linkedin_jobs.enabled(), "month": linkedin_jobs._month(),
             "records": await linkedin_jobs.usage(), "cap": linkedin_jobs.monthly_cap(), "per_search": linkedin_jobs.LIMIT}
+
+
+MAX_IMPORT = 100 * 1024 * 1024
+
+
+@app.post("/api/admin/import")
+async def admin_import(request: Request, file: UploadFile = File(...), project: str = Form("")):
+    """Owner import: a ChatGPT export, a handover note or a structured .json into the optional data layer."""
+    if not is_admin(request):
+        raise HTTPException(401, "Admin only.")
+    from . import importer
+    data = await file.read()
+    if len(data) > MAX_IMPORT:
+        raise HTTPException(413, "That file is over 100 MB. Import it with python -m app.importer instead.")
+    try:
+        return await importer.import_bytes(file.filename or "upload", data, project.strip()[:100])
+    except importer.ImportFailed as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/admin/data")
+async def admin_data(request: Request):
+    """Owner view of the optional data layer: postings by role, calibration by fit band, the fact vault."""
+    if not is_admin(request):
+        raise HTTPException(401, "Admin only.")
+    from collections import Counter
+    from . import calibration, library
+    postings = await cache.data_rows("postings", select="title,market,posted_on", limit=10000)
+    roles = Counter(" ".join(w for w in (r.get("title") or "").split() if w.lower() not in ("senior", "junior", "sr", "jr")) for r in postings)
+    bands = await calibration.active(force=True)
+    pairs = await calibration.outcome_pairs()
+    vault_rows = await cache.data_rows("vault", select="kind,claim,figure,status,applies_to,max_mentions,correction", limit=500)
+    imports = await cache.data_rows("imports", select="filename,kind,counts,created_at", limit=10)
+    return {
+        "store": "Supabase" if cache.supabase_enabled() else "local disk",
+        "postings": {"total": len(postings), "roles": roles.most_common(12), "min_for_keywords": library.MIN_POSTINGS},
+        "calibration": {"min": calibration.MIN_OUTCOMES, "version": bands.version, "cuts": list(bands.cuts),
+                        "bands": calibration.report(pairs, bands.cuts), "total": len(pairs)},
+        "vault": vault_rows,
+        "imports": imports,
+    }
 
 
 class AppearancesRequest(BaseModel):

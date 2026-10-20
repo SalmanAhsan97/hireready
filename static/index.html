@@ -33,6 +33,7 @@
         <span id="admin-pill" class="admin-pill" hidden>Admin · full access</span>
         <button type="button" class="btn ghost small" id="admin-btn" hidden>Admin sign-in</button>
         <button type="button" class="btn ghost small" id="health-btn" hidden>Health</button>
+        <button type="button" class="btn ghost small" id="data-btn" hidden>Data</button>
         <button type="button" class="btn ghost small" id="admin-out" hidden>Sign out</button>
       </div>
     </div>
@@ -45,6 +46,22 @@
     <div class="admin-actions">
       <button type="button" class="btn ghost" id="health-refresh">Check again</button>
       <button type="button" class="btn primary" id="health-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="data-dialog" class="admin-dialog data-dialog">
+    <h3>Data library</h3>
+    <p class="muted small-note">Extra signal on top of the built-in scoring. Empty is fine: every score works without it.</p>
+    <form id="import-form" class="import-form">
+      <label class="field-label" for="import_file">Import a ChatGPT export (.zip), handover note (.md) or import .json</label>
+      <input type="file" id="import_file" accept=".zip,.json,.md,.markdown,.txt" required>
+      <input type="text" id="import_project" placeholder="Only chats whose title or project id contains… (optional)">
+      <button type="submit" class="btn primary small" id="import-go">Import</button>
+      <p class="muted small-note" id="import-result" hidden></p>
+    </form>
+    <div id="data-body"><p class="muted">Loading…</p></div>
+    <div class="admin-actions">
+      <button type="button" class="btn primary" id="data-close">Close</button>
     </div>
   </dialog>
 
@@ -269,6 +286,7 @@
           <div class="chips" id="kw-matched"></div>
           <h3 class="sub bad" id="kw-miss-title">Missing from your resume</h3>
           <div class="chips" id="kw-missing"></div>
+          <p class="muted small-note" id="kw-basis" hidden></p>
         </div>
       </div>
 

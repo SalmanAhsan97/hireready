@@ -34,10 +34,14 @@ def canon(term: str) -> str:
     return group[0] if group else ""
 
 
-def build_search_map(role: str, country: str, postings: list, facts: list[PostingFacts]) -> SearchMap:
+def build_search_map(role: str, country: str, postings: list, facts: list[PostingFacts],
+                     weights: list[float] | None = None) -> SearchMap:
     """postings: objects with .title and .description; facts: the model's reading of them, by index (1-based).
-    A posting counts for a term if the model listed it for that posting or the term appears in its text."""
+    A posting counts for a term if the model listed it for that posting or the term appears in its text.
+    weights: one per posting (library postings count less as they age); None = every posting counts once."""
     n = len(postings)
+    w = weights if weights and len(weights) == n else [1] * n
+    total = sum(w)
     texts = [_norm(f"{p.title} {p.description}") for p in postings]
     titles = [_norm(p.title) for p in postings]
     by_index = {f.index: f for f in facts if 1 <= f.index <= n}
@@ -65,9 +69,9 @@ def build_search_map(role: str, country: str, postings: list, facts: list[Postin
         hit = {i + 1 for i, text in enumerate(hay) if keyword_hits(names, text)} | listed[key]
         if kind == "industry":
             hit = listed[key]  # the industry is a reading of the employer, rarely a literal phrase in the text
-        share = round(100 * len(hit) / n) if n else 0
+        share = round(100 * sum(w[i - 1] for i in hit) / total) if total else 0
         out.append(SearchTerm(term=term, kind=kind, aliases=variants(term), count=len(hit), share=share, label=_label(share)))
-    out.sort(key=lambda t: (-t.count, t.kind, t.term.lower()))
+    out.sort(key=lambda t: (-t.share, -t.count, t.kind, t.term.lower()))  # same order as by count when unweighted
     return SearchMap(role=role, country=country, postings=n, terms=out)
 
 

@@ -49,12 +49,17 @@ IMPORTANCE = {"must": 2, "nice": 1}
 QUANTIFIED_TARGET = 0.5
 
 
-def standing_for(score: int) -> str:
-    if score >= 80:
+# Lower bounds of top candidate / competitive / possible. calibration.py may hand in other cuts, and only
+# once enough real outcomes back them; everything here defaults to these.
+BAND_CUTS = (80, 65, 45)
+
+
+def standing_for(score: int, cuts: tuple[int, int, int] = BAND_CUTS) -> str:
+    if score >= cuts[0]:
         return "top candidate"
-    if score >= 65:
+    if score >= cuts[1]:
         return "competitive"
-    if score >= 45:
+    if score >= cuts[2]:
         return "possible"
     return "long shot"
 
@@ -701,7 +706,8 @@ def compare(job: JobRequirements, scored: list[tuple[str, Scorecard]]) -> Compar
 
 # ---- Confidence (quality of the analysis, not interview odds) and a decision ----
 
-def assess(card: Scorecard, job_text: str, resume: str, projected: int | None) -> Assessment:
+def assess(card: Scorecard, job_text: str, resume: str, projected: int | None,
+           cuts: tuple[int, int, int] = BAND_CUTS) -> Assessment:
     reqs = card.requirements
     chars, n = len(job_text.strip()), len(reqs)
     jd = "full" if chars >= 1200 and n >= 8 else "partial" if chars >= 400 and n >= 4 else "thin"
@@ -726,15 +732,15 @@ def assess(card: Scorecard, job_text: str, resume: str, projected: int | None) -
     score = card.overall
     if jd == "thin":
         decision, label, why = "provisional", "Paste the full posting", "The job text is too short for a reliable verdict; paste the whole description."
-    elif score >= 80 and not missing_musts:
+    elif score >= cuts[0] and not missing_musts:
         decision, label, why = "apply", "Apply now", "Strong match on the must-haves."
-    elif score >= 65 or (projected is not None and projected >= 65 and len(missing_musts) <= 1):
+    elif score >= cuts[1] or (projected is not None and projected >= cuts[1] and len(missing_musts) <= 1):
         decision, label = "apply_after_edits", "Apply after the top edits"
         why = (f"The suggested edits take you from {score} to {projected}." if projected and projected > score
                else "Good match; tighten the gaps below first.")
         if missing_musts:
             why += f" Must-have to address: {missing_musts[0]}."
-    elif score >= 45:
+    elif score >= cuts[2]:
         decision, label = "stretch", "Stretch"
         why = ("Missing must-haves: " + "; ".join(missing_musts[:3]) + "." if missing_musts else "Partial match.") + \
             " Apply if you have a referral or a strong reason."

@@ -17,7 +17,7 @@ import httpx
 from pydantic import ValidationError
 
 from .settings import env
-from . import cache, discover, scoring
+from . import cache, calibration, discover, library, scoring, vault
 from .models import (
     Analysis,
     ApplyKit,
@@ -54,6 +54,18 @@ _premium: ContextVar[bool] = ContextVar("premium", default=False)
 def set_plan(paid: bool) -> None:
     """Called per request: paid requests get PREMIUM_MODEL for writing tasks."""
     _premium.set(paid)
+
+
+_owner: ContextVar[bool] = ContextVar("owner", default=False)
+
+
+def set_owner(admin: bool) -> None:
+    """Called per request: only the signed-in owner's kit and chat edits are checked against the fact vault."""
+    _owner.set(admin)
+
+
+async def _vault() -> list:
+    return await vault.entries() if _owner.get() else []
 
 _client: anthropic.AsyncAnthropic | None = None
 
@@ -502,6 +514,9 @@ async def analyze(resume: str, job: Job) -> Analysis:
         reqs, evidence = await extract(resume, job)
 
     card = scoring.compute(resume, reqs, evidence)
+    bands = await calibration.active()
+    if not bands.builtin:  # enough real outcomes behind them; otherwise the built-in bands stand
+        card.standing = scoring.standing_for(card.overall, bands.cuts)
 
     if demo_mode():
         narrative = Narrative.model_validate(demo.DEMO_NARRATIVE)
@@ -520,13 +535,33 @@ async def analyze(resume: str, job: Job) -> Analysis:
         company=reqs.company or job.company,
     )
     changes, projected = scoring.edit_gains(resume, analysis.changes, lambda t: scoring.compute(t, reqs, evidence).overall, card.overall)
+    assessment = scoring.assess(card, job.description, resume, projected, bands.cuts)
+    if not bands.builtin:
+        assessment.decision_reason += calibration.wording(card.standing, bands)
+        assessment.bands = bands.version
     return analysis.model_copy(update={"changes": changes, "projected_score": projected, "writing_flags": scoring.writing_flags(resume),
-                                       "assessment": scoring.assess(card, job.description, resume, projected)})
+                                       "assessment": assessment})
+
+
+async def score_only(resume: str, job: Job) -> int:
+    """The normal scorer's overall score, without the narrative (importer: historical applications)."""
+    if demo_mode():
+        from . import demo
+        extraction = Extraction.model_validate(demo.DEMO_EXTRACTION)
+        return scoring.compute(demo.DEMO_RESUME, extraction.job, extraction.resume).overall
+    reqs, evidence = await extract(resume, job)
+    return scoring.compute(resume, reqs, evidence).overall
 
 
 async def role_keywords(role: str, seniority: str) -> list:
+    return (await role_keywords_basis(role, seniority))[0]
+
+
+async def role_keywords_basis(role: str, seniority: str) -> tuple[list, int]:
     """Keywords expected for a role, generated WITHOUT the resume (so they can't be biased toward it) and
-    cached per role, so every resume for the same role is measured against the same list."""
+    cached per role, so every resume for the same role is measured against the same list. Once the posting
+    library holds enough postings for the role, terms they ask for replace a few no posting asks for.
+    Returns (keywords, library postings used; 0 = the list as generated)."""
     norm = " ".join(role.lower().split())
     key = _key("role-keywords-v2", norm, seniority)
     cached = await cache.get("roles", key, RoleKeywords)
@@ -534,7 +569,7 @@ async def role_keywords(role: str, seniority: str) -> list:
         prompt = ROLE_KEYWORDS_INSTRUCTIONS.format(role=role, seniority=seniority)
         cached = await _parse(prompt, RoleKeywords, effort="low")
         await cache.put("roles", key, cached)
-    return cached.keywords[:20]
+    return await library.role_keywords(role, cached.keywords[:20])
 
 
 async def analyze_resume(resume: str) -> Analysis:
@@ -550,7 +585,7 @@ async def analyze_resume(resume: str) -> Analysis:
             content = f"<resume>\n{resume}\n</resume>\n\n{RESUME_EXTRACT_INSTRUCTIONS}"
             profile = await _parse(content, ResumeProfile, effort="medium")
             await cache.put("profiles", key, profile)
-        profile.expected_keywords = await role_keywords(profile.target_role, profile.seniority)
+        profile.expected_keywords, lifted = await role_keywords_basis(profile.target_role, profile.seniority)
 
     card = scoring.compute_resume(resume, profile)
 
@@ -565,7 +600,11 @@ async def analyze_resume(resume: str) -> Analysis:
 
     analysis = scoring.assemble_resume(card, narrative, profile)
     changes, projected = scoring.edit_gains(resume, analysis.changes, lambda t: scoring.compute_resume(t, profile).overall, card.overall)
-    return analysis.model_copy(update={"changes": changes, "projected_score": projected, "writing_flags": scoring.writing_flags(resume)})
+    update = {"changes": changes, "projected_score": projected, "writing_flags": scoring.writing_flags(resume)}
+    if not demo_mode() and lifted:
+        update["keyword_basis"] = (f"Expected keywords for {profile.target_role} based on {lifted} postings "
+                                   f"incl. {lifted} from the library, on top of the estimated list.")
+    return analysis.model_copy(update=update)
 
 
 async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage], job: Job | None, analysis: Analysis | None) -> ResumeEdit:
@@ -593,6 +632,8 @@ async def edit_resume(resume: str, current_md: str, messages: list[ChatMessage],
     figures = new_figures(edit.resume_markdown, known)
     if figures:
         edit.changes.append("Please verify — these figures aren't in your original resume: " + ", ".join(figures[:8]))
+    role = (job.title if job else "") or (analysis.job_title if analysis else "")
+    edit.changes += vault.warnings("edit", edit.resume_markdown, await _vault(), role)
     return edit
 
 
@@ -670,7 +711,8 @@ async def search_map(role: str, country: str, allowed: bool = False) -> SearchMa
             return cached
     if found_in is None:
         found_in = await indeed()
-    postings = merge_postings(found_li, found_in)
+    # library postings fill the slots live postings leave, never replacing them
+    postings = merge_postings(found_li, found_in, await library.postings_for(role, country, limit=MAX_MAP_POSTINGS))
     if len(postings) < discover.MIN_POSTINGS:
         return None
     blocks = "\n\n".join(f'<posting n="{i}">\nTitle: {p.title}\n{p.description[:POSTING_CHARS]}\n</posting>' for i, p in enumerate(postings, 1))
@@ -678,8 +720,10 @@ async def search_map(role: str, country: str, allowed: bool = False) -> SearchMa
         facts = await _parse(f"<role>{role}</role>\n\n{blocks}\n\n{POSTINGS_INSTRUCTIONS}", PostingsFacts, effort="low")
     except AIError:
         return None  # the review still runs on the estimated keyword list
-    smap = discover.build_search_map(role, country, postings, facts.postings)
-    names = {"linkedin": "LinkedIn", "indeed": "Indeed"}
+    weighted = any(p.site == "library" for p in postings)
+    weights = [getattr(p, "weight", 1.0) if p.site == "library" else 1.0 for p in postings] if weighted else None
+    smap = discover.build_search_map(role, country, postings, facts.postings, weights)
+    names = {"linkedin": "LinkedIn", "indeed": "Indeed", "library": "Library"}
     for p in postings:
         name = names.get(p.site, p.site.title() or "Other")
         smap.sources[name] = smap.sources.get(name, 0) + 1
@@ -762,10 +806,16 @@ async def build_kit(resume: str, job: Job, analysis: Analysis) -> ApplyKit:
         figures = new_figures(text, known)
         if figures:
             kit.warnings.append(f"Check the {label}: these figures aren't in your resume or the posting: " + ", ".join(figures[:8]))
+    facts = await _vault()
+    for label, text in (("tailored resume", kit.tailored_resume_markdown), ("cover letter", kit.cover_letter),
+                        ("outreach", f"{kit.recruiter_message} {kit.hiring_manager_email_body}")):
+        kit.warnings += vault.warnings(label, text, facts, analysis.job_title or job.title)
     return kit
 
 
-def new_figures(text: str, known: str) -> list[str]:
-    """Numbers in `text` (ignoring [placeholders]) that appear nowhere in `known`."""
+def new_figures(text: str, known: str, facts: list | None = None, role: str = "") -> list[str]:
+    """Numbers in `text` (ignoring [placeholders]) that appear nowhere in `known`. With the owner's fact vault
+    (`facts`), also the figures it marks unverified or removed for `role`, even when `known` has them."""
     unbracketed = re.sub(r"\[[^\]]*\]", " ", text)
-    return sorted({n for n in re.findall(r"\d[\d,.]*\+?%?", unbracketed) if n.rstrip(".,") not in known})
+    found = {n for n in re.findall(r"\d[\d,.]*\+?%?", unbracketed) if n.rstrip(".,") not in known}
+    return sorted(found | set(vault.flagged_figures(unbracketed, facts, role))) if facts else sorted(found)

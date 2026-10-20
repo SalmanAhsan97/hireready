@@ -373,6 +373,7 @@ class Assessment(BaseModel):
     decision: Literal["apply", "apply_after_edits", "stretch", "deprioritize", "provisional"]
     decision_label: str
     decision_reason: str
+    bands: str = ""  # calibrated fit bands behind the standing and decision; "" = the built-in bands
 
 
 class Analysis(BaseModel):
@@ -400,6 +401,7 @@ class Analysis(BaseModel):
     assessment: Optional[Assessment] = None
     writing_flags: List[str] = []  # clichés, repeated metrics, repeated work-authorisation lines (advisory, not scored)
     discover: Optional[Discoverability] = None  # LinkedIn mode: search map, evidence, recruiter searches, rewrites
+    keyword_basis: str = ""  # set when imported library postings lifted the expected keyword list
 
 
 class CompareEntry(BaseModel):
@@ -465,3 +467,40 @@ class ApplyKit(BaseModel):
 
 
 ResumeProfile.model_rebuild()
+
+
+# ---- Importer: what the model reads out of a ChatGPT export or handover note. Code validates and stores. ----
+
+class ImportPosting(BaseModel):
+    title: str  # the job title as posted
+    company: str = ""
+    location: str = ""
+    market: str = ""  # country, e.g. "Canada"
+    posted_on: str = ""  # YYYY-MM-DD or YYYY-MM when known, else ""
+    description: str = ""  # the posting text, copied verbatim when it's there; never the candidate's own text
+    terms: List[str] = []  # skills and tools the posting asks for, as written
+
+
+class ImportApplication(BaseModel):
+    role: str
+    company: str = ""
+    applied_on: str = ""
+    outcome: Literal["applied", "interview", "offer", "rejected", "no_reply", "unknown"]
+    job_text: str = ""  # the full posting the candidate applied with, verbatim, when present
+    resume_text: str = ""  # the resume version sent, verbatim, when present
+
+
+class ImportVaultItem(BaseModel):
+    kind: Literal["fact", "figure", "removed", "corrected", "limit"]
+    claim: str  # the fact or claim as the owner states it
+    figure: str = ""  # the number in it, e.g. "4x" or "35%"
+    status: Literal["verified", "unverified", "removed"]
+    applies_to: str = ""  # role scope ("Social Media Manager"); "" = every role
+    max_mentions: Optional[int] = None  # kind "limit": state it at most this many times
+    correction: str = ""  # the corrected wording, for kind "corrected"
+
+
+class ImportBatch(BaseModel):
+    postings: List[ImportPosting] = []
+    applications: List[ImportApplication] = []
+    vault: List[ImportVaultItem] = []

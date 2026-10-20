@@ -232,3 +232,92 @@ async def count_and_record_usage(client: str, action: str, window_s: float = 864
     hits = [t for t in _local_usage.get(key, []) if now - t < window_s] + [now]
     _local_usage[key] = hits
     return len(hits)
+
+
+# ---- Data layer tables (optional: imported postings, outcomes, the owner's vault and the import log) ----
+# Readers never raise: any failure reads as "no data", so callers keep their built-in behaviour.
+# Writers raise DataStoreError when Supabase is configured but the write fails, so an import never
+# silently lands on a container's throwaway disk instead.
+
+DATA_TABLES = ("postings", "outcomes", "vault", "imports")
+
+
+class DataStoreError(Exception):
+    pass
+
+
+def _data_path(table: str) -> Path:
+    return CACHE_DIR / "data" / f"{table}.json"
+
+
+def _data_disk(table: str) -> dict[str, dict]:
+    try:
+        return json.loads(_data_path(table).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+async def data_insert(table: str, rows: list[dict]) -> int:
+    """Store rows keyed by content_hash, skipping ones already stored. Returns how many were new."""
+    assert table in DATA_TABLES
+    if not rows:
+        return 0
+    if supabase_enabled():
+        try:
+            resp = await _sb().post(f"/screenproof_{table}", params={"on_conflict": "content_hash", "select": "content_hash"},
+                                    headers={"Prefer": "resolution=ignore-duplicates,return=representation"}, json=rows)
+            resp.raise_for_status()
+            return len(resp.json())
+        except (httpx.HTTPError, ValueError) as e:
+            raise DataStoreError(f"Saving to screenproof_{table} failed: {e!r}")
+    stored = _data_disk(table)
+    new = 0
+    for row in rows:
+        if row["content_hash"] not in stored:
+            stored[row["content_hash"]] = row
+            new += 1
+    try:
+        path = _data_path(table)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(stored))
+    except OSError as e:
+        raise DataStoreError(f"Saving {table} to disk failed: {e!r}")
+    return new
+
+
+async def data_rows(table: str, filters: dict[str, str] | None = None, select: str = "*", limit: int = 2000,
+                    order: str = "created_at.desc") -> list[dict]:
+    """Rows of a data table, newest first. `filters` are PostgREST params and only narrow the Supabase query;
+    callers filter again in code, since the disk fallback returns every row."""
+    assert table in DATA_TABLES
+    if supabase_enabled():
+        try:
+            resp = await _sb().get(f"/screenproof_{table}",
+                                   params={**(filters or {}), "select": select, "order": order, "limit": str(limit)})
+            resp.raise_for_status()
+            rows = resp.json()
+            return rows if isinstance(rows, list) else []
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("Reading screenproof_%s failed, treating it as empty: %r", table, e)
+            return []
+    rows = list(_data_disk(table).values())
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return rows[:limit]
+
+
+async def data_has(table: str, hashes: list[str]) -> set[str]:
+    """Which of these content hashes are already stored (so an import can skip re-scoring them)."""
+    if not hashes:
+        return set()
+    if supabase_enabled():
+        found = set()
+        for i in range(0, len(hashes), 100):
+            part = hashes[i:i + 100]
+            try:
+                resp = await _sb().get(f"/screenproof_{table}", params={"content_hash": f"in.({','.join(part)})", "select": "content_hash"})
+                resp.raise_for_status()
+                found |= {r["content_hash"] for r in resp.json()}
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                log.warning("Checking screenproof_%s failed: %r", table, e)
+        return found
+    return set(hashes) & set(_data_disk(table))

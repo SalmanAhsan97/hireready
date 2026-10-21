@@ -629,7 +629,102 @@ function renderDiscover(a) {
   $("#proof-list").innerHTML = d.proof_questions.map((q) => `<li><strong>${esc(q.term)}:</strong> ${esc(q.question)}</li>`).join("");
   $("#appear-out").innerHTML = "";
   state.targetTitles = d.target_titles;
+  $("#content-url").value = state.job?.url || "";
+  $("#content-out").innerHTML = "";
 }
+
+// ---- Content plan: peers' posts → topics, times and a 4-week calendar (computed server-side) ----
+const FORMAT = { text: "Text", image: "Image", video: "Video", document: "Carousel (PDF)", article: "Article", repost: "Repost" };
+const x = (n) => (n === null || n === undefined ? "–" : `${n}×`);
+
+function contentGaps(a) {
+  return (a.discover?.evidence || []).filter((e) => e.status !== "proven" && e.label !== "noise").map((e) => e.term);
+}
+
+function icsFor(plan) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const ev = plan.calendar.map((c, i) => {
+    const [h1, h2] = c.time.split("–").map((t) => t.replace(":", "") + "00");
+    const d = c.date.replace(/-/g, "");
+    const desc = [c.hook && `First line: ${c.hook}`, `Format: ${FORMAT[c.format] || c.format}`, c.why].filter(Boolean).join("\\n");
+    return ["BEGIN:VEVENT", `UID:screenproof-${d}-${i}@screenproof`, `DTSTAMP:${stamp}`, `DTSTART:${d}T${h1}`,
+      `DTEND:${h2 === "000000" ? d + "T235900" : d + "T" + h2}`, `SUMMARY:LinkedIn post: ${c.topic.replace(/[,;]/g, " ")}`,
+      `DESCRIPTION:${desc.replace(/[,;]/g, (m) => "\\" + m)}`, "END:VEVENT"].join("\r\n");
+  });
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Screenproof//Content plan//EN", ...ev, "END:VCALENDAR"].join("\r\n");
+}
+
+function renderContent(plan) {
+  const out = $("#content-out"), b = plan.benchmark;
+  if (plan.status !== "ready") {
+    out.innerHTML = plan.status === "locked"
+      ? lockBox("Your content plan", "What people like you post, when it lands, and a 4-week calendar. Part of the full version.", true)
+      : `<p class="muted">${esc(plan.message)}</p>`;
+    return;
+  }
+  const you = b.your_last_post_days === null ? "We couldn't find public posts from you yet."
+    : `Your last post was ${plural(b.your_last_post_days, "day")} ago; you post ${b.your_per_week} times a week.`;
+  const tiles = `<div class="c-tiles">
+      <div><b>${b.peer_per_week}</b><span>posts a week by people like you</span></div>
+      <div><b>${b.your_per_week ?? "–"}</b><span>posts a week by you</span></div>
+      <div><b>${b.best_format ? esc(FORMAT[b.best_format] || b.best_format) : "–"}</b><span>best format${b.best_format_lift ? ` (${x(b.best_format_lift)} usual)` : ""}</span></div>
+    </div>
+    <p class="small-note">${esc(you)} Based on ${plural(b.peer_posts, "post")} from ${plural(b.peers, "similar profile")}${plan.peers.length ? " (" + plan.peers.slice(0, 4).map(esc).join(", ") + (plan.peers.length > 4 ? "…" : "") + ")" : ""}. Engagement is likes plus comments against each person's usual, so big accounts don't skew it.</p>`;
+  const topics = `<h3 class="sub">Topics worth posting about</h3>
+    <div class="table-wrap"><table class="data-table c-topics"><thead><tr><th>Topic</th><th>Value</th><th>Engagement</th><th>Who posts it</th><th>Proves</th></tr></thead><tbody>
+    ${plan.topics.map((t) => `<tr><td>${t.example_url ? `<a href="${esc(t.example_url)}" target="_blank" rel="noopener">${esc(t.topic)}</a>` : esc(t.topic)}</td>
+      <td><span class="c-value">${t.value}</span></td><td>${t.lift === null ? "open ground" : x(t.lift)}</td>
+      <td>${t.lift === null ? "nobody yet" : `${t.peers} of ${b.peers}`}</td><td>${t.proves.map(esc).join(", ") || "–"}</td></tr>`).join("")}
+    </tbody></table></div>`;
+  if (plan.preview) {
+    out.innerHTML = tiles + topics + lockBox("Best times, formats and your 4-week calendar", "Each post with a day, time, topic, format and first line, ready to add to your calendar.", true);
+    return;
+  }
+  const times = plan.slots.length ? `<h3 class="sub">When posts land best</h3><div class="chips">${plan.slots.slice(0, 4).map((s) =>
+      `<span class="chip">${esc(s.weekday)} ${esc(s.hours)} · ${x(s.lift)}</span>`).join("")}</div>` : "";
+  const weeks = [];
+  plan.calendar.forEach((c, i) => { (weeks[Math.floor(i / Math.max(1, plan.calendar.length / 4))] ||= []).push(c); });
+  const cal = `<div class="c-head"><h3 class="sub">Your next 4 weeks</h3>
+      <button class="btn ghost small" id="content-ics" type="button">Add to calendar (.ics)</button></div>
+    ${plan.measured ? "" : `<p class="small-note muted">Too few posts from people like you to measure times, so these use general LinkedIn guidance.</p>`}
+    <p class="small-note muted">Times in ${esc(plan.tz)}.</p>
+    <div class="c-weeks">${weeks.map((w, i) => `<div class="c-week"><div class="c-week-h">Week ${i + 1}</div>${w.map((c) => `
+      <div class="c-slot">
+        <div class="c-when"><b>${esc(c.weekday.slice(0, 3))} ${esc(c.date.slice(5))}</b><span>${esc(c.time)}</span></div>
+        <div class="c-what"><strong>${esc(c.topic)}</strong> <span class="tag">${esc(FORMAT[c.format] || c.format)}</span> <span class="c-value">${c.value}</span>
+          ${c.hook ? `<p class="c-hook">“${esc(c.hook)}” <button class="btn ghost small copy-text" data-copy="${esc(c.hook)}">Copy</button></p>` : ""}
+          <p class="small-note muted">${esc(c.why)}</p></div>
+      </div>`).join("")}</div>`).join("")}</div>`;
+  out.innerHTML = tiles + times + topics + cal;
+  $("#content-ics").addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([icsFor(plan)], { type: "text/calendar" }));
+    a.download = "linkedin-content-plan.ics";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+}
+
+async function loadContent(tries = 0) {
+  const a = state.analysis, out = $("#content-out"), btn = $("#content-btn");
+  const url = $("#content-url").value.trim();
+  if (!/linkedin\.com\/in\//i.test(url)) { out.innerHTML = "<p class='muted'>Add your LinkedIn profile link first.</p>"; return; }
+  btn.disabled = true;
+  if (!tries) out.innerHTML = "<p class='muted'>Reading posts from people with profiles like yours…</p>";
+  try {
+    const r = await api("/api/linkedin/content", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_url: url, role: a.discover?.target_titles?.[0] || a.job_title || "", gaps: contentGaps(a),
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }) });
+    if (r.plan.status === "collecting" && tries < 12) {
+      out.innerHTML = `<p class="muted">${esc(r.plan.message)} (checking again in 15 seconds)</p>`;
+      setTimeout(() => loadContent(tries + 1), 15000);
+      return;
+    }
+    renderContent(r.plan);
+  } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+  btn.disabled = false;
+}
+$("#content-btn").addEventListener("click", () => loadContent());
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest(".copy-text");

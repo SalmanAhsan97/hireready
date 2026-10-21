@@ -504,3 +504,99 @@ class ImportBatch(BaseModel):
     postings: List[ImportPosting] = []
     applications: List[ImportApplication] = []
     vault: List[ImportVaultItem] = []
+
+
+# ---- Content plan: what similar people post, when it lands, and a calendar built from it ----
+
+PostFormat = Literal["text", "image", "video", "document", "article", "repost"]
+
+
+class ContentPost(BaseModel):
+    id: str
+    author: str = ""
+    author_url: str = ""
+    posted_at: str  # ISO UTC timestamp
+    likes: int = 0
+    comments: int = 0
+    format: PostFormat = "text"
+    text: str = ""  # first 500 characters
+    url: str = ""
+
+
+class PostLabel(BaseModel):
+    id: str
+    topic: str  # 1-4 words, the subject (e.g. "design systems", "career change", "hiring news")
+    hook: Literal["question", "story", "number", "list", "opinion", "announcement", "other"]
+
+
+class PostLabels(BaseModel):
+    labels: List[PostLabel]
+
+
+class TopicHook(BaseModel):
+    topic: str
+    hook: str  # the post's first line
+
+
+class TopicHooks(BaseModel):
+    hooks: List[TopicHook]
+
+
+class TimeSlot(BaseModel):
+    weekday: str
+    hours: str  # "08:00–10:00" in the viewer's time zone
+    posts: int
+    lift: float  # median engagement here vs each author's usual; 1.0 = usual
+
+
+class FormatStat(BaseModel):
+    format: str
+    posts: int
+    lift: float
+
+
+class TopicIdea(BaseModel):
+    topic: str
+    posts: int = 0
+    peers: int = 0  # how many of the peers post about it
+    lift: Optional[float] = None  # None = nobody in the peer group posts it yet
+    proves: List[str] = []  # recruiter-searched skills it would show
+    value: int  # 0-100, computed in code
+    example_url: str = ""
+
+
+class CalendarSlot(BaseModel):
+    date: str  # YYYY-MM-DD
+    weekday: str
+    time: str
+    topic: str
+    format: str
+    value: int
+    why: str
+    hook: str = ""
+
+
+class Benchmark(BaseModel):
+    peers: int
+    peer_posts: int
+    peer_per_week: float
+    your_posts: int
+    your_per_week: Optional[float] = None
+    your_last_post_days: Optional[int] = None
+    best_format: str = ""
+    best_format_lift: Optional[float] = None
+
+
+class ContentPlan(BaseModel):
+    status: Literal["ready", "collecting", "locked", "unavailable"]
+    message: str = ""
+    role: str = ""
+    tz: str = "UTC"
+    benchmark: Optional[Benchmark] = None
+    slots: List[TimeSlot] = []
+    formats: List[FormatStat] = []
+    topics: List[TopicIdea] = []
+    calendar: List[CalendarSlot] = []
+    peers: List[str] = []
+    measured: bool = True  # False = too few peer posts; times are general guidance
+    preview: bool = False

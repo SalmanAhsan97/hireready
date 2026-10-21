@@ -270,3 +270,55 @@ DEMO_LI_NARRATIVE = {
         {"term": "A/B testing", "question": "Have any of your designs been A/B tested? What changed in the result?"},
     ],
 }
+
+
+# ---- Content plan demo: synthetic peers and posts, dated relative to today so the plan always has recent data ----
+
+DEMO_PEERS = ["Avery Chen", "Jordan Patel", "Sam Rivera", "Riley Brooks", "Morgan Lee", "Casey Nguyen", "Taylor Kim", "Jamie Ortiz"]
+DEMO_TOPICS = [  # (topic, hook, format, text, base likes)
+    ("design systems", "list", "document", "5 lessons from scaling our design system across 4 product teams: tokens first, docs second.", 90),
+    ("user research", "story", "text", "We almost shipped the wrong onboarding. Six user interviews changed everything.", 60),
+    ("portfolio tips", "list", "image", "What hiring managers look for in a product design portfolio, from 40 reviews.", 120),
+    ("career lesson", "opinion", "text", "Unpopular opinion: the best designers I know write more than they draw.", 70),
+    ("prototyping", "story", "video", "A 90-second walkthrough of how we prototype flows in Figma before a single ticket exists.", 55),
+    ("team hiring", "announcement", "image", "We're hiring two product designers in Toronto. DM me.", 30),
+]
+
+
+def demo_people(pid: str):
+    from datetime import datetime, timedelta, timezone
+    from .content import Peer, _url
+    from .models import ContentPost
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    peers = [Peer(name=n, url=_url(n.lower().replace(" ", "-"))) for n in DEMO_PEERS]
+    people = {}
+    for a, peer in enumerate(peers):
+        ppid = peer.url.rstrip("/").rsplit("/", 1)[-1]
+        posts = []
+        for i in range(10):
+            topic, _, fmt, text, base = DEMO_TOPICS[(a + i) % len(DEMO_TOPICS)]
+            # Tue/Thu mornings (UTC, before 16:00) do best in this sample; weekends do worst
+            when = now - timedelta(days=4 + 6 * i + a % 3)
+            when = when.replace(hour=[13, 14, 17, 20][(a + i) % 4])
+            boost = 1.8 if when.weekday() in (1, 3) and when.hour < 16 else 0.6 if when.weekday() >= 5 else 1.0
+            likes = int(base * boost * (1 + a / 10))
+            posts.append(ContentPost(id=f"demo-{a}-{i}", author=peer.name, author_url=peer.url, posted_at=when.isoformat(),
+                                     likes=likes, comments=likes // 8, format=fmt, text=text,
+                                     url=f"https://www.linkedin.com/posts/demo-{a}-{i}"))
+        people[ppid] = posts
+    own_when = now - timedelta(days=47)
+    people[pid] = [ContentPost(id="demo-own-1", author="You", author_url=_url(pid), posted_at=own_when.isoformat(), likes=24,
+                               comments=3, format="text", text="Excited to share I've joined a new team!")]
+    return peers, people
+
+
+def demo_label(post):
+    from .models import PostLabel
+    for topic, hook, _, text, _ in DEMO_TOPICS:
+        if post.text == text:
+            return PostLabel(id=post.id, topic=topic, hook=hook)
+    return PostLabel(id=post.id, topic="career update", hook="announcement")
+
+
+def demo_hook(topic: str) -> str:
+    return f"The one thing I'd tell anyone working on {topic}: [your example]."

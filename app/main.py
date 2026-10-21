@@ -31,6 +31,7 @@ ACCESS_CODE = env("ACCESS_CODE", "")
 DAILY_LIMIT = int(env("DAILY_LIMIT", "15"))  # analyses + application kits
 CHAT_LIMIT = int(env("CHAT_LIMIT", "40"))  # resume-chat messages
 JOBS_LIMIT = int(env("JOBS_LIMIT", "10"))  # job-board searches
+CONTENT_LIMIT = int(env("CONTENT_LIMIT", "3"))  # new LinkedIn content plans (each reads ~170 Bright Data records)
 _SALT = env("CLIENT_SALT", ACCESS_CODE or "screenproof")
 
 
@@ -112,6 +113,7 @@ async def enforce_limit(request: Request, action: str):
         "chat": (CHAT_LIMIT, ("chat",), "messages"),
         "preview": (PREVIEW_LIMIT, ("preview",), "free previews"),
         "jobs": (JOBS_LIMIT, ("jobs",), "job searches"),
+        "content": (CONTENT_LIMIT, ("content",), "content plans"),
     }.get(action, (DAILY_LIMIT, ("analyze", "kit"), "runs"))
     if limit <= 0 or is_admin(request):
         return
@@ -479,6 +481,27 @@ async def admin_data(request: Request):
         "vault": vault_rows,
         "imports": imports,
     }
+
+
+class ContentRequest(BaseModel):
+    profile_url: str
+    role: str = ""
+    gaps: list[str] = []  # recruiter-searched skills the profile doesn't prove yet (from the LinkedIn review)
+    tz: str = "UTC"
+
+
+@app.post("/api/linkedin/content")
+async def linkedin_content(req: ContentRequest, request: Request):
+    """Content plan from what similar people post. Only full access spends Bright Data records; a free visitor gets
+    a preview when the posts are already cached. The page asks again while status is "collecting"."""
+    from . import content
+    full = has_full_access(request)
+    pid = content.profile_id(req.profile_url)
+    if full and pid and not ai.demo_mode() and not await content.has_started(pid):
+        await enforce_limit(request, "content")  # counts new plans only, not the page asking again
+    plan = await content.plan_for(req.profile_url[:300], req.role.strip()[:100], [g[:60] for g in req.gaps[:15]],
+                                  req.tz[:64], allowed=full)
+    return {"plan": plan, "demo": ai.demo_mode()}
 
 
 class AppearancesRequest(BaseModel):

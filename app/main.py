@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+from .dns_fallback import install as _dns_fallback  # noqa: E402
+
+_dns_fallback()  # reach brightdata.com even where an ISP blocks its name
+
 from docx import Document  # noqa: E402
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response, StreamingResponse

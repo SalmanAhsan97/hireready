@@ -52,6 +52,9 @@ def test_record_parsing_formats_and_peers():
     p = content.post_from_record(rec, "Ana", "https://www.linkedin.com/in/ana/")
     assert p.format == "document" and p.likes == 821 and p.posted_at.startswith("2026-10-16T15:29")
     assert content.post_from_record({"post_type": "repost", "date_posted": "2026-10-16T00:00:00Z"}, "", "").format == "repost"
+    empty = {"repost_hangtags": None, "repost_attachments": None, "tagged_users": None}  # Bright Data sends this on plain posts
+    assert content.post_from_record({**rec, "document_page_count": 0, "repost": empty}, "", "").format == "text"
+    assert content.post_from_record({**rec, "post_type": None, "repost": {"repost_id": "9"}}, "", "").format == "repost"
     assert content.post_from_record({"error": "x"}, "", "") is None
     profile = {"people_also_viewed": [{"profile_link": "https://www.linkedin.com/in/ana", "name": "Ana"},
                                       {"profile_link": "https://www.linkedin.com/in/me", "name": "Me"}],
@@ -111,9 +114,13 @@ def _fake_bright_data(monkeypatch):
             return [{"people_also_viewed": [{"profile_link": "https://www.linkedin.com/in/ana", "name": "Ana"},
                                             {"profile_link": "https://www.linkedin.com/in/ben", "name": "Ben"}]}]
         out = []
-        for inp in inputs:
-            for i in range(3):
-                out.append({"id": f"{inp['url']}-{i}", "input": {"url": inp["url"]}, "num_likes": 10 * (i + 1), "num_comments": 1,
+        for inp in inputs:  # the shape Bright Data returns: "input" is the post, "discovery_input" the profile asked for
+            who = content.profile_id(inp["url"])
+            for i in range(4):
+                author = who if i < 3 else "acme-co"  # the 4th is a company post this person engaged with
+                out.append({"id": f"{who}-{i}", "input": {"url": f"https://www.linkedin.com/posts/{author}_{i}"},
+                            "discovery_input": {"url": inp["url"]}, "user_id": author, "num_likes": 10 * (i + 1), "num_comments": 1,
+                            "use_url": f"https://www.linkedin.com/company/{author}?trk=x",
                             "date_posted": (datetime.now(timezone.utc) - timedelta(days=3 + i)).isoformat(), "post_text": "Design systems at work"})
         return out
     monkeypatch.setattr(content, "_run", fake_run)
@@ -136,7 +143,9 @@ def test_free_visitors_never_spend_records_and_peer_posts_are_shared(monkeypatch
     assert run(content.plan_for(url, "Designer", [], "UTC", allowed=False)).status == "locked"
     assert calls == []
     plan = run(content.plan_for(url, "Designer", [], "UTC", allowed=True))
-    assert plan.status == "ready" and plan.benchmark.peers == 2 and plan.benchmark.peer_posts == 6 and calls == ["peers", "posts"]
+    b = plan.benchmark
+    assert plan.status == "ready" and b.peers == 2 and calls == ["peers", "posts"]
+    assert (b.peer_posts, b.engaged_posts, b.your_posts) == (6, 2, 3)  # own vs engaged; your engaged post isn't counted
     again = run(content.plan_for(url, "Designer", [], "UTC", allowed=False))  # cached now: a free preview, no new records
     assert again.preview and calls == ["peers", "posts"]
 

@@ -669,12 +669,12 @@ function renderContent(plan) {
       <div><b>${b.your_per_week ?? "–"}</b><span>posts a week by you</span></div>
       <div><b>${b.best_format ? esc(FORMAT[b.best_format] || b.best_format) : "–"}</b><span>best format${b.best_format_lift ? ` (${x(b.best_format_lift)} usual)` : ""}</span></div>
     </div>
-    <p class="small-note">${esc(you)} Based on ${plural(b.peer_posts, "post")} from ${plural(b.peers, "similar profile")}${plan.peers.length ? " (" + plan.peers.slice(0, 4).map(esc).join(", ") + (plan.peers.length > 4 ? "…" : "") + ")" : ""}. Engagement is likes plus comments against each person's usual, so big accounts don't skew it.</p>`;
+    <p class="small-note">${esc(you)} Based on ${plural(b.peer_posts, "post")} by ${plural(b.peers, "similar profile")}${b.engaged_posts ? ` and ${plural(b.engaged_posts, "post")} they engaged with` : ""}${plan.peers.length ? " (" + plan.peers.slice(0, 4).map(esc).join(", ") + (plan.peers.length > 4 ? "…" : "") + ")" : ""}. Engagement is likes plus comments against each person's usual, so big accounts don't skew it.</p>`;
   const topics = `<h3 class="sub">Topics worth posting about</h3>
     <div class="table-wrap"><table class="data-table c-topics"><thead><tr><th>Topic</th><th>Value</th><th>Engagement</th><th>Who posts it</th><th>Proves</th></tr></thead><tbody>
     ${plan.topics.map((t) => `<tr><td>${t.example_url ? `<a href="${esc(t.example_url)}" target="_blank" rel="noopener">${esc(t.topic)}</a>` : esc(t.topic)}</td>
       <td><span class="c-value">${t.value}</span></td><td>${t.lift === null ? "open ground" : x(t.lift)}</td>
-      <td>${t.lift === null ? "nobody yet" : `${t.peers} of ${b.peers}`}</td><td>${t.proves.map(esc).join(", ") || "–"}</td></tr>`).join("")}
+      <td>${t.lift === null ? "nobody yet" : `${t.peers} of ${b.authors || b.peers}`}</td><td>${t.proves.map(esc).join(", ") || "–"}</td></tr>`).join("")}
     </tbody></table></div>`;
   if (plan.preview) {
     out.innerHTML = tiles + topics + lockBox("Best times, formats and your 4-week calendar", "Each post with a day, time, topic, format and first line, ready to add to your calendar.", true);

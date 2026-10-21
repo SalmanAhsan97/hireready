@@ -38,9 +38,10 @@ POSTS_PER_PERSON = int(env("CONTENT_POSTS_PER_PERSON", "10"))
 PEERS_CACHE_S = 30 * 86400
 POSTS_CACHE_S = 7 * 86400
 WAIT_S = 40  # per request; the page asks again while a snapshot is still running
-WINDOW_DAYS = 180  # posts older than this don't count
+WINDOW_DAYS = 365  # posts older than this don't count (many people post a few times a year)
 CADENCE_DAYS = 90
 MIN_BUCKET = 3  # a day/time or format needs this many peer posts before it's ranked
+MIN_TOPIC_AUTHORS = 2
 MIN_MEASURED = 20  # fewer peer posts and the times are general guidance, not measured
 WEEKS = 4
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -114,7 +115,8 @@ def peers_from_profile(rec: dict, own: str, limit: int = PEERS) -> list[Peer]:
 
 
 def _format(rec: dict) -> str:
-    if (rec.get("post_type") or "").lower() == "repost" or rec.get("repost"):
+    repost = rec.get("repost")  # present on every post; only a repost has its id or link filled in
+    if (rec.get("post_type") or "").lower() == "repost" or (isinstance(repost, dict) and (repost.get("repost_id") or repost.get("repost_url"))):
         return "repost"
     if rec.get("videos") or rec.get("video_duration"):
         return "video"
@@ -148,10 +150,18 @@ def post_from_record(rec: dict, author: str, author_url: str) -> ContentPost | N
 
 
 def _record_author(rec: dict) -> str | None:
-    for v in (rec.get("input"), rec.get("discovery_input")):
-        if isinstance(v, dict) and v.get("url"):
-            return profile_id(v["url"])
-    return profile_id(f"https://www.linkedin.com/in/{rec.get('user_id')}/") if rec.get("user_id") else None
+    """The person whose activity this record came from. "discovery_input" holds the profile link we asked for;
+    "input" holds the post's own link, so it's only a fallback."""
+    for v in (rec.get("discovery_input"), rec.get("input")):
+        if isinstance(v, dict) and (pid := profile_id(v.get("url") or "")):
+            return pid
+    return None
+
+
+def _written_by(rec: dict, person: str) -> bool:
+    """A person's activity also lists posts by others they reacted to or reposted (companies, creators)."""
+    uid = str(rec.get("user_id") or "").lower()
+    return not uid or uid == person
 
 
 # ---- Collection ----
@@ -212,6 +222,25 @@ async def peers_for(pid: str, allowed: bool) -> list[Peer] | None:
     return peers
 
 
+def group_records(records: list, people: list[str], names: dict[str, str]) -> dict[str, list[ContentPost]]:
+    """Posts-dataset records → posts per person asked for (profile id), split into their own and ones they engaged with."""
+    grouped: dict[str, list[ContentPost]] = {m: [] for m in people}
+    for rec in records:
+        author = _record_author(rec) if isinstance(rec, dict) else None
+        if author not in grouped:
+            continue
+        if _written_by(rec, author):
+            post = post_from_record(rec, names.get(author, ""), _url(author))
+        else:  # a post this person engaged with: signal for topics and timing, not for their own cadence
+            other = str(rec.get("use_url") or "").split("?")[0] or f"https://www.linkedin.com/in/{rec.get('user_id')}/"
+            post = post_from_record(rec, str(rec.get("user_id") or ""), other)
+            if post:
+                post.engaged = True
+        if post:
+            grouped[author].append(post)
+    return grouped
+
+
 async def posts_for(pid: str, people: list[Peer], allowed: bool) -> dict[str, list[ContentPost]]:
     """Posts per person (profile id → posts), from the shared weekly cache plus one snapshot for the rest."""
     out: dict[str, list[ContentPost]] = {}
@@ -232,13 +261,7 @@ async def posts_for(pid: str, people: list[Peer], allowed: bool) -> dict[str, li
         records = await _run("posts", f"{pid}-{key}", POSTS_DATASET,
                              {"type": "discover_new", "discover_by": "profile_url", "limit_per_input": str(POSTS_PER_PERSON)},
                              [{"url": _url(m)} for m in missing], len(missing) * POSTS_PER_PERSON)
-        grouped: dict[str, list[ContentPost]] = {m: [] for m in missing}
-        for rec in records:
-            author = _record_author(rec) if isinstance(rec, dict) else None
-            if author in grouped:
-                post = post_from_record(rec, names.get(author, ""), _url(author))
-                if post:
-                    grouped[author].append(post)
+        grouped = group_records(records, missing, names)
         for m, posts in grouped.items():  # cached even when empty: someone who doesn't post is an answer too
             await cache.put("li-posts", m, AuthorPosts(posts=posts))
             out[m] = posts
@@ -364,9 +387,12 @@ def build_plan(role: str, pid: str, people: dict[str, list[ContentPost]], labels
     now = now or datetime.now(timezone.utc)
     zone = _zone(tz)
     cutoff = now - timedelta(days=WINDOW_DAYS)
-    own = [p for p in people.get(pid, []) if datetime.fromisoformat(p.posted_at) >= cutoff]
-    peer_lists = {k: [p for p in v if datetime.fromisoformat(p.posted_at) >= cutoff] for k, v in people.items() if k != pid}
-    peer_posts = [p for v in peer_lists.values() for p in v if p.format != "repost"]
+    own = [p for p in people.get(pid, []) if not p.engaged and datetime.fromisoformat(p.posted_at) >= cutoff]
+    recent = {k: [p for p in v if datetime.fromisoformat(p.posted_at) >= cutoff] for k, v in people.items() if k != pid}
+    peer_lists = {k: [p for p in v if not p.engaged] for k, v in recent.items()}  # what each peer wrote: cadence
+    pool = {p.id: p for v in recent.values() for p in v if p.format != "repost"}  # plus what they engaged with
+    peer_posts = list(pool.values())
+    engaged = sum(p.engaged for p in peer_posts)
     rel = relative(peer_posts)
 
     # when: weekday x 2-hour block, in the viewer's time zone
@@ -393,14 +419,14 @@ def build_plan(role: str, pid: str, people: dict[str, list[ContentPost]], labels
         if lab and canon(lab.topic):
             groups.setdefault(canon(lab.topic), []).append(p)
             spell.setdefault(canon(lab.topic), lab.topic)
-    n_peers = max(1, sum(1 for v in peer_lists.values() if v))
+    n_peers = max(1, len({p.author_url for p in peer_posts}))  # everyone whose posts are in the sample
     gap_terms = [g for g in dict.fromkeys(" ".join(g.split())[:60] for g in gaps) if g][:15]
     topics, covered = [], set()
     for key, items in groups.items():
-        if len(items) < 2:
-            continue
-        lift = _median([rel[p.id] for p in items])
         authors = len({p.author_url for p in items})
+        if len(items) < 2 or authors < MIN_TOPIC_AUTHORS:
+            continue  # one person's or one company's subject isn't a pattern
+        lift = _median([rel[p.id] for p in items])
         hay = _norm(" ".join([spell[key]] + [p.text for p in items]))
         proves = [g for g in gap_terms if keyword_hits([g, *variants(g)], hay)][:3]
         covered.update(canon(g) for g in proves)
@@ -417,7 +443,7 @@ def build_plan(role: str, pid: str, people: dict[str, list[ContentPost]], labels
     rates = [_per_week(v, now) for v in peer_lists.values()]
     own_sorted = sorted(own, key=lambda p: p.posted_at, reverse=True)
     bench = Benchmark(
-        peers=len(peer_lists), peer_posts=len(peer_posts), peer_per_week=_median(rates), your_posts=len(own),
+        peers=len(peer_lists), authors=n_peers if peer_posts else 0, peer_posts=len(peer_posts) - engaged, engaged_posts=engaged, peer_per_week=_median(rates), your_posts=len(own),
         your_per_week=_per_week(own, now) if pid in people else None,
         your_last_post_days=(now - datetime.fromisoformat(own_sorted[0].posted_at)).days if own_sorted else None,
         best_format=best.format if best else "", best_format_lift=best.lift if best else None,
@@ -451,7 +477,7 @@ def build_plan(role: str, pid: str, people: dict[str, list[ContentPost]], labels
                 when = (f"peer posts at this time get {lift}× their usual engagement" if lift is not None
                         else "general LinkedIn guidance (too few peer posts to measure)")
                 what = (f"shows {t.proves[0]}, which recruiters search for" if t.proves
-                        else f"{t.lift}× usual engagement; {t.peers} of {n_peers} peers post about it")
+                        else f"{t.lift}× usual engagement; {t.peers} of the {n_peers} people sampled post about it")
                 calendar.append(CalendarSlot(date=(monday + timedelta(days=7 * w + d)).isoformat(), weekday=DAYS[d], time=_hours(h),
                                              topic=t.topic, format=fmt, value=t.value, why=f"{when[0].upper()}{when[1:]}; {what}."))
     return ContentPlan(status="ready", role=role, tz=str(zone.key), benchmark=bench, slots=time_slots, formats=formats,
@@ -490,7 +516,7 @@ async def plan_for(profile_url: str, role: str, gaps: list[str], tz: str, allowe
             return ContentPlan(status="locked", message="The content plan is part of the full version.")
     labels = await labels_for([p for v in people.values() for p in v])
     plan = build_plan(role, pid, people, labels, gaps, tz, peer_names=[p.name for p in peers if p.name])
-    if not plan.benchmark or not plan.benchmark.peer_posts:
+    if not plan.benchmark or not (plan.benchmark.peer_posts + plan.benchmark.engaged_posts):
         plan.message = "The people similar to you haven't posted publicly lately, so there's nothing to measure yet."
     if not allowed:
         return preview(plan)

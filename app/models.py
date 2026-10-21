@@ -521,6 +521,7 @@ class ContentPost(BaseModel):
     format: PostFormat = "text"
     text: str = ""  # first 500 characters
     url: str = ""
+    engaged: bool = False  # written by someone else; the peer reacted to or reposted it
 
 
 class PostLabel(BaseModel):
@@ -578,7 +579,9 @@ class CalendarSlot(BaseModel):
 
 class Benchmark(BaseModel):
     peers: int
-    peer_posts: int
+    authors: int = 0  # everyone whose posts are in the sample: the peers plus people and companies they engaged with
+    peer_posts: int  # written by the similar profiles
+    engaged_posts: int = 0  # by others, that the similar profiles reacted to or reposted
     peer_per_week: float
     your_posts: int
     your_per_week: Optional[float] = None

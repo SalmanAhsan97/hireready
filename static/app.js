@@ -669,7 +669,9 @@ function renderContent(plan) {
       <div><b>${b.your_per_week ?? "–"}</b><span>posts a week by you</span></div>
       <div><b>${b.best_format ? esc(FORMAT[b.best_format] || b.best_format) : "–"}</b><span>best format${b.best_format_lift ? ` (${x(b.best_format_lift)} usual)` : ""}</span></div>
     </div>
-    <p class="small-note">${esc(you)} Based on ${plural(b.peer_posts, "post")} by ${plural(b.peers, "similar profile")}${b.engaged_posts ? ` and ${plural(b.engaged_posts, "post")} they engaged with` : ""}${plan.peers.length ? " (" + plan.peers.slice(0, 4).map(esc).join(", ") + (plan.peers.length > 4 ? "…" : "") + ")" : ""}. Engagement is likes plus comments against each person's usual, so big accounts don't skew it.</p>`;
+    ${b.peers ? `<p class="c-callout"><strong>${b.active_peers === 0 ? `None of the ${b.peers} people like you posted` : `${b.active_peers < b.peers ? "Only " : ""}${b.active_peers} of ${b.peers} people like you posted`} in the last 3 months.</strong>
+      ${b.weekly_beats ? `Posting once a week would make you more active than ${b.weekly_beats === b.peers ? "all" : b.weekly_beats} of them.` : ""}</p>` : ""}
+    <p class="small-note">${esc(you)} Based on ${plural(b.peer_posts, "post")} by ${plural(b.peers, "similar profile")}${plan.role_peers ? ` (${plan.role_peers} with your title${plan.market ? " in " + esc(plan.market) : ""}, the rest from "People also viewed")` : ""}${b.engaged_posts ? ` and ${plural(b.engaged_posts, "post")} they engaged with` : ""}${plan.peers.length ? " (" + plan.peers.slice(0, 4).map(esc).join(", ") + (plan.peers.length > 4 ? "…" : "") + ")" : ""}. Engagement is likes plus comments against each person's usual, so big accounts don't skew it.</p>`;
   const topics = `<h3 class="sub">Topics worth posting about</h3>
     <div class="table-wrap"><table class="data-table c-topics"><thead><tr><th>Topic</th><th>Value</th><th>Engagement</th><th>Who posts it</th><th>Proves</th></tr></thead><tbody>
     ${plan.topics.map((t) => `<tr><td>${t.example_url ? `<a href="${esc(t.example_url)}" target="_blank" rel="noopener">${esc(t.topic)}</a>` : esc(t.topic)}</td>
@@ -714,6 +716,7 @@ async function loadContent(tries = 0) {
   try {
     const r = await api("/api/linkedin/content", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ profile_url: url, role: a.discover?.target_titles?.[0] || a.job_title || "", gaps: contentGaps(a),
+        country: a.discover?.search_map?.country || "",
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }) });
     if (r.plan.status === "collecting" && tries < 12) {
       out.innerHTML = `<p class="muted">${esc(r.plan.message)} (checking again in 15 seconds)</p>`;

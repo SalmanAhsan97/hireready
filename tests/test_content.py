@@ -67,6 +67,7 @@ def test_plan_finds_best_time_format_and_topics():
     people["me"] = [post(0, "me", 47, 9, 20)]
     plan = content.build_plan("Product Designer", "me", people, labels_for(people), ["design systems", "accessibility"], "UTC", NOW)
     assert plan.measured and plan.benchmark.peers == 4 and plan.benchmark.your_last_post_days == 47
+    assert plan.benchmark.active_peers == 4 and plan.benchmark.weekly_beats == 4  # 8 posts in 8 weeks, about 0.5 a week
     assert (plan.slots[0].weekday, plan.slots[0].hours) == ("Tuesday", "14:00–16:00") and plan.slots[0].lift > 1
     assert plan.formats[0].format == "document"
     top = plan.topics[0]
@@ -167,3 +168,75 @@ def test_endpoint_in_demo_mode():
     assert r.status_code == 200 and plan["status"] == "ready" and plan["calendar"] and plan["calendar"][0]["hook"]
     bad = client.post("/api/linkedin/content", json={"profile_url": "not a link"}).json()["plan"]
     assert bad["status"] == "unavailable"
+
+
+SEARCH = [{"organicResults": [
+    {"url": "https://pk.linkedin.com/in/ali-raza", "title": "Ali Raza - Marketing Manager - Acme"},
+    {"url": "https://www.linkedin.com/in/sara-k", "title": "Sara K - Senior Brand Marketing Manager at Beta"},
+    {"url": "https://www.linkedin.com/in/me", "title": "Me - Marketing Manager"},
+    {"url": "https://www.linkedin.com/in/omar", "title": "Omar - Software Engineer"},  # not the role
+    {"url": "https://www.linkedin.com/company/acme", "title": "Acme | LinkedIn"},
+]}]
+
+
+def test_role_peers_from_search_keep_people_with_the_title():
+    peers = content.peers_from_search(SEARCH, "Marketing Manager", {"me"})
+    assert [(p.name, p.source) for p in peers] == [("Ali Raza", "role"), ("Sara K", "role")]
+
+
+def test_peer_group_puts_role_peers_first_and_falls_back(monkeypatch):
+    async def viewed(pid, allowed):
+        return [content.Peer(name="Ana", url=content._url("ana")), content.Peer(name="Ali", url=content._url("ali-raza"))]
+    monkeypatch.setattr(content, "peers_for", viewed)
+
+    async def by_role(role, country, exclude, allowed):
+        return content.peers_from_search(SEARCH, role, exclude)
+    monkeypatch.setattr(content, "role_peers", by_role)
+    group = run(content.peer_group("me", "Marketing Manager", "Pakistan", True))
+    assert [p.name for p in group] == ["Ali Raza", "Sara K", "Ana"]  # no duplicate Ali, role peers first
+
+    async def none(*a, **k):
+        return []
+    monkeypatch.setattr(content, "role_peers", none)  # search unavailable: "people also viewed" alone, as before
+    assert [p.name for p in run(content.peer_group("me", "Marketing Manager", "Pakistan", True))] == ["Ana", "Ali"]
+
+
+def test_role_peer_search_is_cached_and_never_free(monkeypatch):
+    calls = []
+
+    class FakeResp:
+        status_code = 201
+
+        def json(self):
+            return SEARCH
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def post(self, *a, **k):
+            calls.append(k["json"]["queries"])
+            return FakeResp()
+    monkeypatch.setattr(content.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("APIFY_API_TOKEN", "test")
+    assert run(content.role_peers("Marketing Manager", "Pakistan", {"me"}, allowed=False)) == []  # visitors don't search
+    assert len(run(content.role_peers("Marketing Manager", "Pakistan", {"me"}, allowed=True))) == 2
+    assert len(run(content.role_peers("marketing  manager", "Pakistan", {"me"}, allowed=False))) == 2  # cached, shared
+    assert calls == ['site:linkedin.com/in "Marketing Manager" Pakistan']
+
+
+def test_hashtag_topic_fallback():
+    assert content.hashtag_topic("Great week! #LinkedIn #DigitalMarketing #SEO") == "digital marketing"
+    assert content.hashtag_topic("no tags here") == ""
+
+
+def test_slow_model_falls_back_to_hashtags(monkeypatch):
+    monkeypatch.setattr(ai, "demo_mode", lambda: False)
+    monkeypatch.setattr(content, "LABEL_BUDGET_S", 0.05)
+
+    async def slow(*a, **k):
+        await asyncio.sleep(5)
+    monkeypatch.setattr(ai, "_parse", slow)
+    posts = [post(0, "ana", 3, 9, 10, text="Launch recap #ContentStrategy"), post(1, "ana", 4, 9, 10, text="no tags")]
+    labels = run(content.labels_for(posts))
+    assert labels["ana-0"].topic == "content strategy" and "ana-1" not in labels

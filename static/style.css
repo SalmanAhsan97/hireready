@@ -655,5 +655,6 @@ textarea { resize: vertical; }
 .c-when b { color: var(--text); font-size: 13px; }
 .c-what { font-size: 14px; min-width: 0; }
 .c-hook { font-size: 13px; margin: 6px 0 0; }
+.c-callout { background: var(--good-soft); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 4px 0 8px; }
 .c-topics td:first-child { font-weight: 600; }
 @media (max-width: 600px) { .c-tiles { grid-template-columns: 1fr; } }

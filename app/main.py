@@ -492,6 +492,7 @@ class ContentRequest(BaseModel):
     role: str = ""
     gaps: list[str] = []  # recruiter-searched skills the profile doesn't prove yet (from the LinkedIn review)
     tz: str = "UTC"
+    country: str = ""  # market for finding people with the same title
 
 
 @app.post("/api/linkedin/content")
@@ -504,7 +505,7 @@ async def linkedin_content(req: ContentRequest, request: Request):
     if full and pid and not ai.demo_mode() and not await content.has_started(pid):
         await enforce_limit(request, "content")  # counts new plans only, not the page asking again
     plan = await content.plan_for(req.profile_url[:300], req.role.strip()[:100], [g[:60] for g in req.gaps[:15]],
-                                  req.tz[:64], allowed=full)
+                                  req.tz[:64], allowed=full, country=req.country if req.country in jobs.COUNTRIES else "")
     return {"plan": plan, "demo": ai.demo_mode()}
 
 

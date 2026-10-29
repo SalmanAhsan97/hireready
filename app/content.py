@@ -9,10 +9,12 @@ costs nothing). Collection is asynchronous: an unfinished snapshot is kept and t
 Same split as the rest of the app: the model only labels each post (topic, hook style) and writes first lines;
 code computes cadence, engagement by day and hour, format and topic performance, value scores and the calendar.
 """
+import asyncio
 import hashlib
 import json
 import logging
 import os
+import re
 import statistics
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -34,6 +36,11 @@ log = logging.getLogger("screenproof.content")
 PROFILE_DATASET = os.getenv("BRIGHTDATA_LINKEDIN_PROFILE_DATASET", "gd_l1viktl72bvl7bjuj0")
 POSTS_DATASET = os.getenv("BRIGHTDATA_LINKEDIN_POSTS_DATASET", "gd_lyy3tktm25m4avu764")
 PEERS = int(env("CONTENT_PEERS", "15"))
+ROLE_PEERS = int(env("CONTENT_ROLE_PEERS", "10"))  # of PEERS: people with the target title in the market, found by search
+APIFY_API = "https://api.apify.com/v2"
+GOOGLE_ACTOR = "apify~google-search-scraper"
+COUNTRY_CODES = {"USA": "us", "Canada": "ca", "UK": "gb", "Australia": "au", "India": "in", "Pakistan": "pk", "UAE": "ae",
+                 "Saudi Arabia": "sa", "Germany": "de", "Singapore": "sg"}
 POSTS_PER_PERSON = int(env("CONTENT_POSTS_PER_PERSON", "10"))
 PEERS_CACHE_S = 30 * 86400
 POSTS_CACHE_S = 7 * 86400
@@ -42,6 +49,10 @@ WINDOW_DAYS = 365  # posts older than this don't count (many people post a few t
 CADENCE_DAYS = 90
 MIN_BUCKET = 3  # a day/time or format needs this many peer posts before it's ranked
 MIN_TOPIC_AUTHORS = 2
+LABEL_BUDGET_S = 90  # the plan never waits longer than this on the model to label posts
+HOOK_BUDGET_S = 60
+GENERIC_TAGS = {"linkedin", "hiring", "jobs", "job", "career", "careers", "motivation", "success", "life", "pakistan", "india",
+                "love", "work", "opentowork", "growth", "business", "leadership", "inspiration", "news", "update"}
 MIN_MEASURED = 20  # fewer peer posts and the times are general guidance, not measured
 WEEKS = 4
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -61,6 +72,7 @@ def enabled() -> bool:
 class Peer(BaseModel):
     name: str = ""
     url: str
+    source: str = "viewed"  # viewed = LinkedIn's "people also viewed"; role = same title in the same market, by search
 
 
 class Peers(BaseModel):
@@ -209,6 +221,49 @@ async def has_started(pid: str) -> bool:
     return bool(pending and pending.snapshot_id)
 
 
+def peers_from_search(items: list, role: str, exclude: set[str]) -> list[Peer]:
+    """Google results for site:linkedin.com/in "<role>" <country> → people whose headline has the role's core words."""
+    from .library import matches
+    out, seen = [], set(exclude)
+    for item in items if isinstance(items, list) else []:
+        for o in (item.get("organicResults") or []) if isinstance(item, dict) else []:
+            pid = profile_id(str(o.get("url") or ""))
+            name, _, headline = str(o.get("title") or "").partition(" - ")
+            if pid and pid not in seen and matches(headline or name, role):
+                seen.add(pid)
+                out.append(Peer(name=name.strip()[:80], url=_url(pid), source="role"))
+    return out
+
+
+async def role_peers(role: str, country: str, exclude: set[str], allowed: bool) -> list[Peer]:
+    """People with the target title in the target market, via one Google search (Apify), cached 30 days per role and
+    market and shared across users. [] when unavailable, so the plan falls back to "people also viewed" alone."""
+    role = " ".join(role.split())[:80]
+    if not role:
+        return []
+    key = hashlib.sha256(f"{role.lower()}|{country}".encode()).hexdigest()[:32]
+    cached = await cache.get("li-role-peers", key, Peers, max_age_s=PEERS_CACHE_S)
+    if cached is None:
+        if not (allowed and os.getenv("APIFY_API_TOKEN")):
+            return []
+        query = f'site:linkedin.com/in "{role}"' + (f" {country}" if country else "")
+        try:
+            async with httpx.AsyncClient(timeout=120) as http:
+                resp = await http.post(f"{APIFY_API}/acts/{GOOGLE_ACTOR}/run-sync-get-dataset-items",
+                                       headers={"Authorization": f"Bearer {os.environ['APIFY_API_TOKEN']}"},
+                                       json={"queries": query, "maxPagesPerQuery": 2, "resultsPerPage": 10, "saveHtml": False,
+                                             "countryCode": COUNTRY_CODES.get(country, "")})
+            items = resp.json() if resp.status_code in (200, 201) else None
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("Role peer search failed: %s", type(e).__name__)
+            items = None
+        if items is None:
+            return []  # not cached: the next request tries again
+        cached = Peers(peers=peers_from_search(items, role, set()))
+        await cache.put("li-role-peers", key, cached)
+    return [p for p in cached.peers if profile_id(p.url) not in exclude]
+
+
 async def peers_for(pid: str, allowed: bool) -> list[Peer] | None:
     cached = await cache.get("li-peers", pid, Peers, max_age_s=PEERS_CACHE_S)
     if cached is not None:
@@ -295,21 +350,41 @@ async def labels_for(posts: list[ContentPost]) -> dict[str, PostLabel]:
         for p in todo:
             out[p.id] = demo_label(p)
         return out
-    for i in range(0, len(todo), 80):
-        part = todo[i:i + 80]
+
+    async def label(part: list[ContentPost]):
         block = "\n\n".join(f'<post id="{p.id}">{p.text[:400]}</post>' for p in part)
         try:
             got = await ai._parse(f"{block}\n\n{LABEL_INSTRUCTIONS}", PostLabels, effort="low")
         except ai.AIError as e:
             log.warning("Labelling posts failed: %s", e)
-            continue
+            return
         ids = {p.id for p in part}
         for lab in got.labels:
             if lab.id in ids and lab.topic.strip():
                 lab.topic = " ".join(lab.topic.lower().split())[:40]
                 out[lab.id] = lab
                 await cache.put("post-labels", lab.id, lab)
+
+    tasks = [asyncio.create_task(label(todo[i:i + 40])) for i in range(0, len(todo), 40)]
+    if tasks:
+        done, pending = await asyncio.wait(tasks, timeout=LABEL_BUDGET_S)
+        for t in pending:  # a slow model doesn't hold the plan hostage; the next run labels what's left
+            t.cancel()
+        if pending:
+            log.warning("Labelling posts ran past %ss; %d batches use hashtags instead", LABEL_BUDGET_S, len(pending))
+    for p in todo:  # unlabelled: the post's own first hashtag, read in code (not cached, so the model gets another go)
+        if p.id not in out and (tag := hashtag_topic(p.text)):
+            out[p.id] = PostLabel(id=p.id, topic=tag, hook="other")
     return out
+
+
+def hashtag_topic(text: str) -> str:
+    """#DigitalMarketing → "digital marketing"; skips generic tags."""
+    for tag in re.findall(r"#(\w{3,40})", text or ""):
+        words = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tag).replace("_", " ").lower().strip()
+        if tag.lower() not in GENERIC_TAGS and words not in GENERIC_TAGS:
+            return words
+    return ""
 
 
 async def hooks_for(role: str, slots: list[CalendarSlot], topics: list[TopicIdea]) -> dict[str, str]:
@@ -443,6 +518,7 @@ def build_plan(role: str, pid: str, people: dict[str, list[ContentPost]], labels
     rates = [_per_week(v, now) for v in peer_lists.values()]
     own_sorted = sorted(own, key=lambda p: p.posted_at, reverse=True)
     bench = Benchmark(
+        active_peers=sum(1 for r in rates if r > 0), weekly_beats=sum(1 for r in rates if r < 1),
         peers=len(peer_lists), authors=n_peers if peer_posts else 0, peer_posts=len(peer_posts) - engaged, engaged_posts=engaged, peer_per_week=_median(rates), your_posts=len(own),
         your_per_week=_per_week(own, now) if pid in people else None,
         your_last_post_days=(now - datetime.fromisoformat(own_sorted[0].posted_at)).days if own_sorted else None,
@@ -489,7 +565,18 @@ def preview(plan: ContentPlan) -> ContentPlan:
     return plan.model_copy(update={"topics": plan.topics[:3], "calendar": [], "slots": [], "formats": [], "preview": True})
 
 
-async def plan_for(profile_url: str, role: str, gaps: list[str], tz: str, allowed: bool) -> ContentPlan:
+async def peer_group(pid: str, role: str, country: str, allowed: bool) -> list[Peer] | None:
+    """Up to PEERS people: same title in the same market first (they post about the role), then "people also viewed"
+    (they're close to this profile). None when this request may not spend records and nothing is cached."""
+    viewed = await peers_for(pid, allowed)
+    if viewed is None:
+        return None
+    by_role = (await role_peers(role, country, {pid}, allowed))[:ROLE_PEERS]
+    seen = {pid} | {profile_id(p.url) for p in by_role}
+    return by_role + [p for p in viewed if profile_id(p.url) not in seen][:max(0, PEERS - len(by_role))]
+
+
+async def plan_for(profile_url: str, role: str, gaps: list[str], tz: str, allowed: bool, country: str = "") -> ContentPlan:
     from . import ai
     pid = profile_id(profile_url)
     if not pid:
@@ -501,7 +588,7 @@ async def plan_for(profile_url: str, role: str, gaps: list[str], tz: str, allowe
         if not enabled():
             return ContentPlan(status="unavailable", message="The content plan isn't available right now.")
         try:
-            peers = await peers_for(pid, allowed)
+            peers = await peer_group(pid, role, country, allowed)
             if peers is None:
                 return ContentPlan(status="locked", message="The content plan is part of the full version.")
             people = await posts_for(pid, [Peer(name="", url=_url(pid)), *peers], allowed)
@@ -516,10 +603,16 @@ async def plan_for(profile_url: str, role: str, gaps: list[str], tz: str, allowe
             return ContentPlan(status="locked", message="The content plan is part of the full version.")
     labels = await labels_for([p for v in people.values() for p in v])
     plan = build_plan(role, pid, people, labels, gaps, tz, peer_names=[p.name for p in peers if p.name])
+    plan.role_peers = sum(p.source == "role" for p in peers)
+    plan.market = country
     if not plan.benchmark or not (plan.benchmark.peer_posts + plan.benchmark.engaged_posts):
         plan.message = "The people similar to you haven't posted publicly lately, so there's nothing to measure yet."
     if not allowed:
         return preview(plan)
-    hooks = await hooks_for(role, plan.calendar, plan.topics)
+    try:
+        hooks = await asyncio.wait_for(hooks_for(role, plan.calendar, plan.topics), HOOK_BUDGET_S)
+    except asyncio.TimeoutError:
+        log.warning("Writing first lines ran past %ss; the calendar goes out without them", HOOK_BUDGET_S)
+        hooks = {}
     plan.calendar = [s.model_copy(update={"hook": hooks.get(s.topic, "")}) for s in plan.calendar]
     return plan

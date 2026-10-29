@@ -580,6 +580,8 @@ class CalendarSlot(BaseModel):
 class Benchmark(BaseModel):
     peers: int
     authors: int = 0  # everyone whose posts are in the sample: the peers plus people and companies they engaged with
+    active_peers: int = 0  # peers who posted at all in the last 90 days
+    weekly_beats: int = 0  # peers who post less than once a week: posting weekly puts you ahead of them
     peer_posts: int  # written by the similar profiles
     engaged_posts: int = 0  # by others, that the similar profiles reacted to or reposted
     peer_per_week: float
@@ -601,5 +603,7 @@ class ContentPlan(BaseModel):
     topics: List[TopicIdea] = []
     calendar: List[CalendarSlot] = []
     peers: List[str] = []
+    role_peers: int = 0  # of the similar profiles, how many share the target title in the market (the rest: "people also viewed")
+    market: str = ""
     measured: bool = True  # False = too few peer posts; times are general guidance
     preview: bool = False
